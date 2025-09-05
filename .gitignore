@@ -1,0 +1,208 @@
+# =========================================
+# Root Repository .gitignore
+# =========================================
+
+# =========================================
+# Python Virtual Environments
+# =========================================
+
+# Python virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# pip
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# =========================================
+# Node.js (Frontend)
+# =========================================
+
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Production builds
+.next/
+out/
+build/
+dist/
+
+# Environment variables
+.env
+.env*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# =========================================
+# IDE & Editor Files
+# =========================================
+
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# =========================================
+# OS Generated Files
+# =========================================
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# =========================================
+# Logs & Debug Files
+# =========================================
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Cache
+.cache
+*.tsbuildinfo
+
+# =========================================
+# Database & Cache Files
+# =========================================
+
+# MongoDB
+*.db
+*.sqlite
+*.sqlite3
+
+# Zabbix Agent cache
+counter_cache.json
+
+# =========================================
+# Archives & Temporary Files
+# =========================================
+
+# Archives
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+*.orig
+*.old
+
+# =========================================
+# Project Specific
+# =========================================
+
+# Test files
+test-*.js
+setup-*.js
+*-test.js
+
+# Documentation files (optional - remove if you want to keep)
+AUTH_SETUP_README.md
+MONGODB_ATLAS_SETUP.md
+PROTECTION_GUIDE.md
+
+# =========================================
+# Deployment & Hosting
+# =========================================
+
+# Vercel
+.vercel
+
+# Netlify
+.netlify/
+
+# AWS
+.aws-sam/
+
+# =========================================
+# Security
+# =========================================
+
+# Private keys and certificates
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+
+# Password files
+*.password
+*.secret
