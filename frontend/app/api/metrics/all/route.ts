@@ -15,34 +15,28 @@ interface Metric {
   value_type: string;
 }
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { hostid: string } }
-) {
+export async function GET(request: NextRequest) {
   try {
-    const hostid = params.hostid;
     const { searchParams } = new URL(request.url);
 
-    const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 1000); // Max 1000
+    const limit = Math.min(parseInt(searchParams.get('limit') || '100'), 1000); // Max 1000
     const metric = searchParams.get('metric'); // Optional metric filter
-    const iface = searchParams.get('iface'); // Optional interface filter
+    const hostid = searchParams.get('hostid'); // Optional host filter
 
     const metricsCollection = await getCollection('metrics_ts');
 
     // Build query
-    const query: any = {
-      'meta.hostid': hostid
-    };
+    const query: any = {};
 
     if (metric) {
       query.metric = { $regex: metric, $options: 'i' }; // Case-insensitive partial match
     }
 
-    if (iface) {
-      query['meta.ifindex'] = iface;
+    if (hostid) {
+      query['meta.hostid'] = hostid;
     }
 
-    // Get latest metrics
+    // Get latest metrics from all hosts
     const metrics = await metricsCollection
       .find(query)
       .sort({ ts: -1 })
@@ -66,17 +60,16 @@ export async function GET(
 
     return NextResponse.json({
       count: formattedMetrics.length,
-      hostid: hostid,
       filters: {
         metric: metric,
-        iface: iface,
+        hostid: hostid,
         limit: limit
       },
       data: formattedMetrics
     });
 
   } catch (error) {
-    console.error('Error fetching metrics:', error);
+    console.error('Error fetching all metrics:', error);
     return NextResponse.json(
       { error: 'Failed to fetch metrics' },
       { status: 500 }

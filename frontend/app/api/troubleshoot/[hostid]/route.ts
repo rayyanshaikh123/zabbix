@@ -1,6 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCollection } from '@/lib/mongo';
 
+interface TroubleshootData {
+  hostid: string;
+  device_id: string;
+  time_range: {
+    start: number;
+    end: number;
+    hours: number;
+  };
+  metrics: {
+    count: number;
+    data: any[];
+  };
+  alerts: {
+    count: number;
+    data: any[];
+  };
+  summary: {
+    total_metrics: number;
+    total_alerts: number;
+    critical_alerts: number;
+    warning_alerts: number;
+    last_seen: number | null;
+  };
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: { hostid: string } }
@@ -45,21 +70,46 @@ export async function GET(
       .limit(limit)
       .toArray();
 
+    // Get device_id from first metric or alert
+    const device_id = metrics[0]?.meta?.device_id || alerts[0]?.device_id || 'Unknown';
+
     // Convert timestamps and format data
     const formattedMetrics = metrics.map(doc => ({
-      ...doc,
       _id: doc._id.toString(),
-      ts: Math.floor(doc.ts.getTime() / 1000)
+      ts: Math.floor(doc.ts.getTime() / 1000),
+      meta: {
+        hostid: doc.meta?.hostid || '',
+        device_id: doc.meta?.device_id || '',
+        ifindex: doc.meta?.ifindex,
+        ifdescr: doc.meta?.ifdescr
+      },
+      metric: doc.metric,
+      value: doc.value,
+      value_type: doc.value_type
     }));
 
     const formattedAlerts = alerts.map(doc => ({
-      ...doc,
       _id: doc._id.toString(),
-      detected_at: Math.floor(doc.detected_at.getTime() / 1000)
+      device_id: doc.device_id,
+      hostid: doc.hostid,
+      iface: doc.iface,
+      metric: doc.metric,
+      value: doc.value,
+      status: doc.status,
+      severity: doc.severity,
+      detected_at: Math.floor(doc.detected_at.getTime() / 1000),
+      evidence: doc.evidence,
+      labels: doc.labels
     }));
 
-    return NextResponse.json({
+    // Calculate summary statistics
+    const criticalAlerts = formattedAlerts.filter(alert => alert.severity === 'critical').length;
+    const warningAlerts = formattedAlerts.filter(alert => alert.severity === 'warning').length;
+    const lastSeen = formattedMetrics.length > 0 ? Math.max(...formattedMetrics.map(m => m.ts)) : null;
+
+    const troubleshootData: TroubleshootData = {
       hostid: hostid,
+      device_id: device_id,
       time_range: {
         start: Math.floor(startTime.getTime() / 1000),
         end: Math.floor(endTime.getTime() / 1000),
@@ -72,8 +122,17 @@ export async function GET(
       alerts: {
         count: formattedAlerts.length,
         data: formattedAlerts
+      },
+      summary: {
+        total_metrics: formattedMetrics.length,
+        total_alerts: formattedAlerts.length,
+        critical_alerts: criticalAlerts,
+        warning_alerts: warningAlerts,
+        last_seen: lastSeen
       }
-    });
+    };
+
+    return NextResponse.json(troubleshootData);
 
   } catch (error) {
     console.error('Error fetching troubleshoot data:', error);

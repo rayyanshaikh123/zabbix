@@ -5,223 +5,400 @@ import { AlertsStacked } from "@/components/charts/alerts-stacked"
 import { MetricCard } from "@/components/metric-cards"
 import { ChartSwitcher } from "@/components/charts/chart-switcher"
 import { BackButton } from "@/components/back-button"
-import { getCollection } from "@/lib/mongo"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { AlertTriangle, CheckCircle, Clock, MapPin, Server } from "lucide-react"
 
-// Fetch real location data from MongoDB
-async function getLocationsData() {
+interface LocationHealth {
+  location: string;
+  hierarchy: {
+    country: string;
+    city: string;
+    office: string;
+    fullPath: string;
+  };
+  deviceCount: number;
+  healthyDevices: number;
+  warningDevices: number;
+  criticalDevices: number;
+  lastSeen: Date | null;
+  deviceDistribution: {
+    switches: number;
+    routers: number;
+    pcs: number;
+    interfaces: number;
+    other: number;
+  };
+  devices: {
+    hostid: string;
+    device_id: string;
+    status: string;
+    severity: string;
+    last_seen: Date;
+    deviceType: string;
+  }[];
+}
+
+interface HierarchicalLocation {
+  level: 'country' | 'city' | 'office';
+  name: string;
+  path: string;
+  deviceCount: number;
+  healthyDevices: number;
+  warningDevices: number;
+  criticalDevices: number;
+  lastSeen: Date | null;
+  children: HierarchicalLocation[];
+  deviceDistribution?: {
+    switches: number;
+    routers: number;
+    pcs: number;
+    interfaces: number;
+    other: number;
+  };
+}
+
+// Fetch location data from API
+async function getLocationsData(): Promise<{ count: number; locations: LocationHealth[]; hierarchy: HierarchicalLocation[]; error?: string }> {
   try {
-    const metricsCollection = await getCollection('metrics_ts')
-
-    // Get unique locations from the metrics data
-    const locations = await metricsCollection.aggregate([
-      {
-        $match: {
-          'meta.geo': { $exists: true, $ne: null }
-        }
-      },
-      {
-        $group: {
-          _id: {
-            country: '$meta.geo.country',
-            city: '$meta.geo.city'
-          },
-          deviceCount: { $addToSet: '$meta.device_id' },
-          lastSeen: { $max: '$ts' }
-        }
-      },
-      {
-        $group: {
-          _id: '$_id.country',
-          cities: {
-            $push: {
-              name: '$_id.city',
-              deviceCount: { $size: '$deviceCount' },
-              lastSeen: '$lastSeen'
-            }
-          },
-          totalDevices: { $sum: { $size: '$deviceCount' } }
-        }
-      },
-      {
-        $project: {
-          _id: 0,
-          country: '$_id',
-          cities: 1,
-          totalDevices: 1
-        }
-      }
-    ]).toArray()
-
-    return locations
+    const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/locations`, {
+      cache: 'no-store',
+      next: { revalidate: 30 },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    return res.json();
   } catch (error) {
-    console.error('Error fetching locations:', error)
-    return []
+    console.error('Error fetching locations:', error);
+    return { count: 0, locations: [], hierarchy: [], error: error instanceof Error ? error.message : 'Failed to fetch locations' };
   }
 }
 
-// Fetch global health metrics
-async function getGlobalHealthMetrics() {
+// Fetch global health metrics from API
+async function getGlobalHealthMetrics(): Promise<{ count: number; alerts: any[]; error?: string }> {
   try {
-    const metricsCollection = await getCollection('metrics_ts')
-    const eventsCollection = await getCollection('events')
-
-    // Get health status from recent metrics
-    const recentMetrics = await metricsCollection.find({
-      ts: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } // Last 24 hours
-    }).toArray()
-
-    // Count by health status (this would need to be determined by your agent logic)
-    // For now, using a simple calculation
-    const healthy = Math.round(recentMetrics.length * 0.75)
-    const warning = Math.round(recentMetrics.length * 0.20)
-    const critical = recentMetrics.length - healthy - warning
-
-    // Get uptime data
-    const uptimeData = Array.from({ length: 24 }).map((_, i) => ({
-      t: `${i}:00`,
-      uptime: 95 + Math.round(Math.sin(i / 3) * 3)
-    }))
-
-    // Get alerts data
-    const alertsData = await eventsCollection.aggregate([
-      {
-        $match: {
-          detected_at: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } // Last 7 days
-        }
-      },
-      {
-        $group: {
-          _id: {
-            $dateToString: {
-              format: "%w",
-              date: "$detected_at"
-            }
-          },
-          warning: {
-            $sum: { $cond: [{ $eq: ["$severity", "warning"] }, 1, 0] }
-          },
-          critical: {
-            $sum: { $cond: [{ $eq: ["$severity", "critical"] }, 1, 0] }
-          }
-        }
-      }
-    ]).toArray()
-
-    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-    const alerts = dayNames.map((label, index) => {
-      const dayData = alertsData.find(d => parseInt(d._id) === index)
-      return {
-        label,
-        warning: dayData?.warning || 0,
-        critical: dayData?.critical || 0
-      }
-    })
-
-    return {
-      globalHealth: [
-        { name: "Healthy", value: healthy },
-        { name: "Warning", value: warning },
-        { name: "Critical", value: critical }
-      ],
-      uptime: uptimeData,
-      alerts: alerts
-    }
+    const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/alerts?limit=100`, {
+      cache: 'no-store',
+      next: { revalidate: 30 },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    return res.json();
   } catch (error) {
-    console.error('Error fetching health metrics:', error)
-    return {
-      globalHealth: [
-        { name: "Healthy", value: 0 },
-        { name: "Warning", value: 0 },
-        { name: "Critical", value: 0 }
-      ],
-      uptime: [],
-      alerts: []
-    }
+    console.error('Error fetching global health metrics:', error);
+    return { count: 0, alerts: [], error: error instanceof Error ? error.message : 'Failed to fetch global health metrics' };
   }
+}
+
+function getStatusBadge(status: string, severity: string) {
+  if (severity === 'critical') {
+    return <Badge variant="destructive" className="flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Critical</Badge>;
+  }
+  if (severity === 'warning') {
+    return <Badge variant="secondary" className="flex items-center gap-1"><Clock className="h-3 w-3" />Warning</Badge>;
+  }
+  return <Badge variant="default" className="flex items-center gap-1"><CheckCircle className="h-3 w-3" />Operational</Badge>;
 }
 
 export default async function LocationsPage() {
-  const locations = await getLocationsData()
-  const healthData = await getGlobalHealthMetrics()
+  const [locationsData, healthData] = await Promise.all([
+    getLocationsData(),
+    getGlobalHealthMetrics()
+  ]);
 
-  // Create location items from real data
-  const items = locations.map(loc => ({
-    slug: loc.country.toLowerCase(),
-    title: loc.country,
+  const hasConnectionError = locationsData.error || healthData.error;
+  const locations = locationsData.locations || [];
+  const hierarchy = locationsData.hierarchy || [];
+  const alerts = healthData.alerts || [];
+
+  // Calculate global health metrics from alerts
+  const criticalAlerts = alerts.filter(alert => alert.severity === 'critical').length;
+  const warningAlerts = alerts.filter(alert => alert.severity === 'warning').length;
+  const totalAlerts = alerts.length;
+
+  // Create hierarchical location items
+  const countryItems = hierarchy.map(country => ({
+    slug: country.name.toLowerCase().replace(/\s+/g, '-'),
+    title: country.name,
+    level: 'country' as const,
     data: [
-      { name: "Healthy", value: Math.round(loc.totalDevices * 0.7) },
-      { name: "Warning", value: Math.round(loc.totalDevices * 0.2) },
-      { name: "Critical", value: Math.round(loc.totalDevices * 0.1) }
+      { name: "Healthy", value: country.healthyDevices },
+      { name: "Warning", value: country.warningDevices },
+      { name: "Critical", value: country.criticalDevices }
     ],
-    deviceCount: loc.totalDevices,
-    cities: loc.cities
-  }))
+    deviceCount: country.deviceCount,
+    lastSeen: country.lastSeen,
+    children: country.children.map(city => ({
+      slug: `${country.name.toLowerCase()}-${city.name.toLowerCase()}`.replace(/\s+/g, '-'),
+      title: city.name,
+      level: 'city' as const,
+      data: [
+        { name: "Healthy", value: city.healthyDevices },
+        { name: "Warning", value: city.warningDevices },
+        { name: "Critical", value: city.criticalDevices }
+      ],
+      deviceCount: city.deviceCount,
+      lastSeen: city.lastSeen,
+      children: city.children.map(office => ({
+        slug: `${country.name.toLowerCase()}-${city.name.toLowerCase()}-${office.name.toLowerCase()}`.replace(/\s+/g, '-'),
+        title: office.name,
+        level: 'office' as const,
+        data: [
+          { name: "Healthy", value: office.healthyDevices },
+          { name: "Warning", value: office.warningDevices },
+          { name: "Critical", value: office.criticalDevices }
+        ],
+        deviceCount: office.deviceCount,
+        lastSeen: office.lastSeen,
+        deviceDistribution: office.deviceDistribution
+      }))
+    }))
+  }));
 
-  // Fallback to sample data if no real data
-  if (items.length === 0) {
-    items.push(
-      { slug: "india", title: "India", data: healthData.globalHealth, deviceCount: 0, cities: [] },
-      { slug: "japan", title: "Japan", data: healthData.globalHealth, deviceCount: 0, cities: [] },
-      { slug: "toronto", title: "Toronto", data: healthData.globalHealth, deviceCount: 0, cities: [] }
-    )
-  }
+  // Fallback data when no location data found
+  const fallbackItems = [
+    { 
+      slug: "location-not-found", 
+      title: "Location Not Found", 
+      level: 'country' as const,
+      data: [
+        { name: "Healthy", value: 0 },
+        { name: "Warning", value: 0 },
+        { name: "Critical", value: 0 }
+      ], 
+      deviceCount: 0, 
+      lastSeen: null,
+      children: []
+    }
+  ];
+
+  const displayItems = countryItems.length > 0 ? countryItems : fallbackItems;
 
   return (
-    <main className="mx-auto max-w-6xl p-6">
+    <main className="mx-auto max-w-7xl p-6">
       <header className="mb-6">
         <div className="flex items-center gap-4 mb-4">
           <BackButton />
         </div>
-        <h1 className="text-2xl font-semibold text-balance">Locations — Global Health</h1>
-        <p className="text-sm text-muted-foreground">Click a location to drill down into cities and offices.</p>
+        <h1 className="text-2xl font-semibold text-balance">Locations — Health Records</h1>
+        <p className="text-sm text-muted-foreground">Monitor device health by location. Click a location to view detailed health records.</p>
+        {hasConnectionError && (
+          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <h3 className="text-red-800 font-medium">Database Connection Issue</h3>
+            <p className="text-red-600 text-sm mt-1">
+              {locationsData.error || healthData.error}
+            </p>
+          </div>
+        )}
       </header>
 
+      {/* Global Health Overview */}
       <section className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
-          title="Total Locations"
-          value={items.length}
-          data={healthData.uptime.map((u, i) => ({ x: i, y: u.uptime }))}
-        />
-        <MetricCard
-          title="Global Healthy"
-          value={`${Math.round((healthData.globalHealth.find(h => h.name === 'Healthy')?.value || 0) / Math.max(1, healthData.globalHealth.reduce((sum, h) => sum + h.value, 0)) * 100)}%`}
-          data={healthData.uptime.map((u, i) => ({ x: i, y: 70 + (u.uptime - 95) }))}
-        />
-        <MetricCard
-          title="Open Alerts"
-          value={healthData.alerts.reduce((sum, a) => sum + a.warning + a.critical, 0)}
-          data={healthData.alerts.map((a, i) => ({ x: i, y: a.warning + a.critical }))}
-        />
-        <MetricCard
-          title="Avg Uptime"
-          value="98.1%"
-          data={healthData.uptime.map((u, i) => ({ x: i, y: u.uptime }))}
-        />
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Locations</CardTitle>
+            <MapPin className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{locations.length}</div>
+            <p className="text-xs text-muted-foreground">Monitored locations</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Devices</CardTitle>
+            <Server className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{locations.reduce((sum, loc) => sum + loc.deviceCount, 0)}</div>
+            <p className="text-xs text-muted-foreground">Across all locations</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Critical Alerts</CardTitle>
+            <AlertTriangle className="h-4 w-4 text-red-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">{criticalAlerts}</div>
+            <p className="text-xs text-muted-foreground">
+              {warningAlerts} warnings, {totalAlerts} total
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Health Status</CardTitle>
+            <CheckCircle className="h-4 w-4 text-green-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600">
+              {locations.length > 0 ? 
+                Math.round((locations.reduce((sum, loc) => sum + loc.healthyDevices, 0) / 
+                Math.max(1, locations.reduce((sum, loc) => sum + loc.deviceCount, 0))) * 100) : 0}%
+            </div>
+            <p className="text-xs text-muted-foreground">Devices operational</p>
+          </CardContent>
+        </Card>
       </section>
 
-      <section className="grid gap-6 md:grid-cols-3">
-        {items.map((loc) => (
-          <Link key={loc.slug} href={`/locations/${loc.slug}`} className="block focus:outline-none">
-            <HealthChart title={loc.title} data={loc.data} />
-          </Link>
-        ))}
-      </section>
+      {/* Hierarchical Location Health Records */}
+      {displayItems.length > 0 && displayItems.some(loc => loc.deviceCount > 0) ? (
+        <section className="space-y-8">
+          {displayItems
+            .filter(loc => loc.deviceCount > 0) // Only show locations with devices
+            .map((country) => (
+            <div key={country.slug} className="space-y-4">
+              {/* Country Level */}
+              <Link href={`/locations/${country.slug}`} className="block">
+                <Card className="hover:shadow-lg transition-shadow border-2">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <span className="text-2xl">🌍</span>
+                      {country.title}
+                    </CardTitle>
+                    <CardDescription>
+                      {country.deviceCount} devices across {country.children.length} cities • {country.lastSeen ? `Last seen: ${new Date(country.lastSeen).toLocaleString()}` : 'No recent activity'}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="h-32">
+                      <HealthChart title="" data={country.data} />
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
 
-      <section className="mb-6 grid gap-6 md:grid-cols-2">
-        <ChartSwitcher title="Global Health — Custom View" kind="health" data={healthData.globalHealth} />
-        <ChartSwitcher
-          title="Global Uptime — Custom View"
-          kind="series"
-          data={healthData.uptime.map((u) => ({ t: u.t, value: u.uptime }))}
-          yLabel="Uptime %"
-          yDomain={[90, 100]}
-        />
-      </section>
+              {/* Cities Level */}
+              {country.children.length > 0 && (
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 ml-4">
+                  {country.children
+                    .filter(city => city.deviceCount > 0)
+                    .map((city) => (
+                    <div key={city.slug} className="space-y-2">
+                      <Link href={`/locations/${country.slug}/${city.slug}`} className="block">
+                        <Card className="hover:shadow-lg transition-shadow">
+                          <CardHeader className="pb-2">
+                            <CardTitle className="flex items-center gap-2 text-lg">
+                              <span className="text-xl">🏙️</span>
+                              {city.title}
+                            </CardTitle>
+                            <CardDescription>
+                              {city.deviceCount} devices • {city.children.length} offices
+                            </CardDescription>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="h-24">
+                              <HealthChart title="" data={city.data} />
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </Link>
 
-      <section className="mt-6 grid gap-6 md:grid-cols-2">
-        <UptimeLine title="Global Uptime (24h)" data={healthData.uptime} />
-        <AlertsStacked title="Alerts by Day (Wk)" data={healthData.alerts} />
-      </section>
+                      {/* Offices Level */}
+                      {city.children.length > 0 && (
+                        <div className="grid gap-2 ml-4">
+                          {city.children
+                            .filter(office => office.deviceCount > 0)
+                            .map((office) => (
+                            <Link key={office.slug} href={`/locations/${country.slug}/${city.slug}/${office.slug}`} className="block">
+                              <Card className="hover:shadow-md transition-shadow border-l-4 border-l-blue-200">
+                                <CardHeader className="py-2">
+                                  <CardTitle className="flex items-center gap-2 text-sm">
+                                    <span className="text-lg">🏢</span>
+                                    {office.title}
+                                  </CardTitle>
+                                  <CardDescription className="text-xs">
+                                    {office.deviceCount} devices
+                                    {office.deviceDistribution && (
+                                      <span className="ml-2">
+                                        • {office.deviceDistribution.switches} switches • {office.deviceDistribution.routers} routers • {office.deviceDistribution.pcs} PCs
+                                      </span>
+                                    )}
+                                  </CardDescription>
+                                </CardHeader>
+                                <CardContent className="py-2">
+                                  <div className="h-16">
+                                    <HealthChart title="" data={office.data} />
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </section>
+      ) : (
+        <section className="text-center py-12">
+          <MapPin className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
+          <h3 className="text-lg font-semibold mb-2">No Device Locations Found</h3>
+          <p className="text-muted-foreground mb-4">
+            No devices with location data were found in the monitoring system.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Make sure your monitoring agent is collecting location data and sending it to the database.
+          </p>
+        </section>
+      )}
+
+      {/* Global Health Summary - Only show if there are locations with devices */}
+      {locations.length > 0 && locations.some(loc => loc.deviceCount > 0) && (
+        <section className="mt-6 grid gap-6 md:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Global Health Distribution</CardTitle>
+              <CardDescription>Health status across all monitored locations</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="h-64">
+                <HealthChart 
+                  title="Global Health" 
+                  data={[
+                    { name: "Healthy", value: locations.reduce((sum, loc) => sum + loc.healthyDevices, 0) },
+                    { name: "Warning", value: locations.reduce((sum, loc) => sum + loc.warningDevices, 0) },
+                    { name: "Critical", value: locations.reduce((sum, loc) => sum + loc.criticalDevices, 0) }
+                  ]} 
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent Alerts by Location</CardTitle>
+              <CardDescription>Latest alerts from all monitored locations</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {alerts.slice(0, 10).map((alert) => (
+                  <div key={alert._id} className="flex items-center justify-between p-2 border rounded">
+                    <div>
+                      <p className="text-sm font-medium">{alert.device_id}</p>
+                      <p className="text-xs text-muted-foreground">{alert.metric}</p>
+                    </div>
+                    <div className="text-right">
+                      {getStatusBadge(alert.status, alert.severity)}
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {new Date(alert.detected_at * 1000).toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+                {alerts.length === 0 && (
+                  <p className="text-center py-4 text-muted-foreground">No recent alerts</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+      )}
     </main>
   )
 }
