@@ -157,14 +157,7 @@ export default async function LocationsPage() {
     cities: loc.cities
   }))
 
-  // Fallback to sample data if no real data
-  if (items.length === 0) {
-    items.push(
-      { slug: "india", title: "India", data: healthData.globalHealth, deviceCount: 0, cities: [] },
-      { slug: "japan", title: "Japan", data: healthData.globalHealth, deviceCount: 0, cities: [] },
-      { slug: "toronto", title: "Toronto", data: healthData.globalHealth, deviceCount: 0, cities: [] }
-    )
-  }
+  // No fallback data - show empty state if no real data
 
   return (
     <main className="mx-auto max-w-6xl p-6">
@@ -200,11 +193,26 @@ export default async function LocationsPage() {
       </section>
 
       <section className="grid gap-6 md:grid-cols-3">
-        {items.map((loc) => (
-          <Link key={loc.slug} href={`/locations/${loc.slug}`} className="block focus:outline-none">
-            <HealthChart title={loc.title} data={loc.data} />
-          </Link>
-        ))}
+        {items.length > 0 ? (
+          items.map((loc) => (
+            <Link key={loc.slug} href={`/locations/${loc.slug}`} className="block focus:outline-none">
+              <HealthChart title={loc.title} data={loc.data} />
+            </Link>
+          ))
+        ) : (
+          <div className="col-span-full text-center py-12">
+            <div className="w-24 h-24 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+              <svg className="w-12 h-12 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-medium text-muted-foreground mb-2">No Location Data Available</h3>
+            <p className="text-sm text-muted-foreground">
+              Location data will appear here once the agent starts collecting geographic information.
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="mb-6 grid gap-6 md:grid-cols-2">

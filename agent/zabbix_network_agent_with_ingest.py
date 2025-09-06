@@ -16,11 +16,11 @@ from typing import Optional, Dict, Any, List
 
 # ------------- CONFIG -------------
 ZABBIX_URL = os.environ.get("ZABBIX_URL", "http://192.168.2.20/zabbix/api_jsonrpc.php")
-API_TOKEN = os.environ.get("ZABBIX_API_TOKEN") or "<paste-your-api-token-here>"
+API_TOKEN = os.environ.get("ZABBIX_API_TOKEN") or "94a6d99d8564f1c7bf09b8b542567671f1837fc0ef778dd5a3f4380275f3ac4a"
 HEADERS = {"Content-Type": "application/json-rpc", "Authorization": f"Bearer {API_TOKEN}"}
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "30"))
 CACHE_FILE = os.environ.get("CACHE_FILE", "counter_cache.json")
-BACKEND_URL = os.environ.get("BACKEND_URL")  # e.g. http://127.0.0.1:8000
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")  # e.g. http://127.0.0.1:8000
 BACKEND_METRICS_ENDPOINT = (BACKEND_URL.rstrip("/") + "/ingest/metrics") if BACKEND_URL else None
 BACKEND_EVENTS_ENDPOINT = (BACKEND_URL.rstrip("/") + "/ingest/events") if BACKEND_URL else None
 GEOIP_URL = "http://ip-api.com/json/"
@@ -325,7 +325,7 @@ def main():
 
                     status = "OK"
                     if oper_up is False:
-                        status = "Operational state != up — check link/config"
+                        status = "Interface down — check link/config"
                     else:
                         if rate_bps is not None:
                             if link_speed_bps:
@@ -337,9 +337,9 @@ def main():
                                     status = "High bandwidth (bps)"
                         else:
                             if oper_up is False:
-                                status = "Operational state != up — check link/config"
+                                status = "Interface down — check link/config"
                             else:
-                                status = "No rate available (idle or insufficient history)"
+                                status = "Interface up — no traffic"
 
                     # Build metric doc (time-series friendly)
                     try:
@@ -371,10 +371,10 @@ def main():
                             "metric": key or name,
                             "value": raw_value,
                             "status": status,
-                            "severity": "warning" if "High" in status else "critical" if "Operational" in status else "info",
+                            "severity": "warning" if "High" in status else "critical" if "down" in status.lower() else "info",
                             "detected_at": int(time.time()),
                             "evidence": {"rate_bps": rate_bps, "link_speed_bps": link_speed_bps},
-                            "labels": [label for label in ([ "link-down" ] if "Operational" in status else ["high-bandwidth"] if "High bandwidth" in status else [])]
+                            "labels": [label for label in ([ "link-down" ] if "down" in status.lower() else ["high-bandwidth"] if "High bandwidth" in status else [])]
                         }
                         all_events.append(event_doc)
 

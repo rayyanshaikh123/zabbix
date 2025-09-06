@@ -5,7 +5,7 @@ from typing import List, Optional, Any, Dict
 from motor.motor_asyncio import AsyncIOMotorClient
 import os, time, datetime
 
-MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+MONGO_URL = os.environ.get("MONGODB_URI", "mongodb+srv://rayyanshaikhh:lUrqVSElRC1tEDUJ@cluster0.xxfzbq2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 DB_NAME = os.environ.get("DB_NAME", "netmon")
 METRICS_COLL = os.environ.get("METRICS_COLL", "metrics_ts")
 EVENTS_COLL = os.environ.get("EVENTS_COLL", "events")
@@ -107,3 +107,27 @@ async def get_metrics(device_id: str, metric: str, start_ts: int, end_ts: int, l
         d["ts"] = int(d["ts"].timestamp())
         docs.append(d)
     return {"count": len(docs), "data": docs}
+
+@app.get("/health")
+async def health_check():
+    try:
+        # Test database connection
+        await db.command("ping")
+        metrics_count = await db[METRICS_COLL].count_documents({})
+        events_count = await db[EVENTS_COLL].count_documents({})
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "metrics_count": metrics_count,
+            "events_count": events_count,
+            "collections": {
+                "metrics": METRICS_COLL,
+                "events": EVENTS_COLL
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "database": "disconnected",
+            "error": str(e)
+        }
