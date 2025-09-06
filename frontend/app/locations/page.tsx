@@ -7,7 +7,9 @@ import { ChartSwitcher } from "@/components/charts/chart-switcher"
 import { BackButton } from "@/components/back-button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { AlertTriangle, CheckCircle, Clock, MapPin, Server } from "lucide-react"
+import { AlertTriangle, CheckCircle, Clock, MapPin, Server, Map } from "lucide-react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { LocationMapWrapper } from "@/components/map/location-map-wrapper"
 
 interface LocationHealth {
   location: string;
@@ -243,8 +245,22 @@ export default async function LocationsPage() {
         </Card>
       </section>
 
-      {/* Hierarchical Location Health Records */}
-      {displayItems.length > 0 && displayItems.some(loc => loc.deviceCount > 0) ? (
+      {/* Tabbed View for Cards and Map */}
+      <Tabs defaultValue="cards" className="mt-6">
+        <TabsList className="mb-4">
+          <TabsTrigger value="cards" className="flex items-center gap-2">
+            <Server className="h-4 w-4" />
+            Card View
+          </TabsTrigger>
+          <TabsTrigger value="map" className="flex items-center gap-2">
+            <Map className="h-4 w-4" />
+            Map View
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="cards" className="m-0">
+          {/* Hierarchical Location Health Records */}
+          {displayItems.length > 0 && displayItems.some(loc => loc.deviceCount > 0) ? (
         <section className="space-y-8">
           {displayItems
             .filter(loc => loc.deviceCount > 0) // Only show locations with devices
@@ -347,6 +363,56 @@ export default async function LocationsPage() {
           </p>
         </section>
       )}
+        </TabsContent>
+
+        <TabsContent value="map" className="m-0">
+          {displayItems.length > 0 && displayItems.some(loc => loc.deviceCount > 0) ? (
+            <LocationMapWrapper 
+              locations={displayItems.map(country => ({
+                level: 'country' as const,
+                name: country.title,
+                slug: country.slug,
+                metrics: {
+                  Healthy: country.data.find(d => d.name === 'Healthy')?.value || 0,
+                  Warning: country.data.find(d => d.name === 'Warning')?.value || 0,
+                  Critical: country.data.find(d => d.name === 'Critical')?.value || 0
+                },
+                deviceCount: country.deviceCount,
+                children: country.children.map(city => ({
+                  level: 'city' as const,
+                  name: city.title,
+                  slug: city.slug,
+                  metrics: {
+                    Healthy: city.data.find(d => d.name === 'Healthy')?.value || 0,
+                    Warning: city.data.find(d => d.name === 'Warning')?.value || 0,
+                    Critical: city.data.find(d => d.name === 'Critical')?.value || 0
+                  },
+                  deviceCount: city.deviceCount,
+                  children: city.children.map(office => ({
+                    level: 'office' as const,
+                    name: office.title,
+                    slug: office.slug,
+                    metrics: {
+                      Healthy: office.data.find(d => d.name === 'Healthy')?.value || 0,
+                      Warning: office.data.find(d => d.name === 'Warning')?.value || 0,
+                      Critical: office.data.find(d => d.name === 'Critical')?.value || 0
+                    },
+                    deviceCount: office.deviceCount
+                  }))
+                }))
+              }))}
+            />
+          ) : (
+            <div className="text-center py-12">
+              <MapPin className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">No Location Data Available</h3>
+              <p className="text-muted-foreground">
+                Location data will appear here once devices are monitored.
+              </p>
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
 
       {/* Global Health Summary - Only show if there are locations with devices */}
       {locations.length > 0 && locations.some(loc => loc.deviceCount > 0) && (
