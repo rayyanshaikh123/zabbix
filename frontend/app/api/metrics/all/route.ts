@@ -25,8 +25,12 @@ export async function GET(request: NextRequest) {
 
     const metricsCollection = await getCollection('metrics_ts');
 
-    // Build query
-    const query: any = {};
+    // Build query - exclude Zabbix server by default
+    const query: any = {
+      'meta.device_id': { 
+        $not: { $regex: /zabbix|server/i } 
+      }
+    };
 
     if (metric) {
       query.metric = { $regex: metric, $options: 'i' }; // Case-insensitive partial match

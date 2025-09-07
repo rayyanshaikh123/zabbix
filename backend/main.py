@@ -5,7 +5,7 @@ from typing import List, Optional, Any, Dict
 from motor.motor_asyncio import AsyncIOMotorClient
 import os, time, datetime
 
-MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+MONGO_URL = os.environ.get("MONGO_URL", "mongodb+srv://rayyanshaikhh:lUrqVSElRC1tEDUJ@cluster0.xxfzbq2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 DB_NAME = os.environ.get("DB_NAME", "netmon")
 METRICS_COLL = os.environ.get("METRICS_COLL", "metrics_ts")
 EVENTS_COLL = os.environ.get("EVENTS_COLL", "events")
@@ -78,6 +78,7 @@ async def ingest_metrics(payload: List[MetricIn]):
         raise HTTPException(500, str(e))
 
 @app.post("/ingest/events", status_code=201)
+
 async def ingest_events(payload: List[EventIn]):
     docs = [e.dict() for e in payload]
     for d in docs:

@@ -1,3 +1,5 @@
+"use client"
+
 import Link from "next/link"
 import { HealthChart } from "@/components/charts/health-chart"
 import { UptimeLine } from "@/components/charts/uptime-line"
@@ -10,6 +12,7 @@ import { Badge } from "@/components/ui/badge"
 import { AlertTriangle, CheckCircle, Clock, MapPin, Server, Map } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { LocationMapWrapper } from "@/components/map/location-map-wrapper"
+import { useState, useEffect } from "react"
 
 interface LocationHealth {
   location: string;
@@ -64,7 +67,6 @@ interface HierarchicalLocation {
 async function getLocationsData(): Promise<{ count: number; locations: LocationHealth[]; hierarchy: HierarchicalLocation[]; error?: string }> {
   try {
     const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/locations`, {
-      cache: 'no-store',
       next: { revalidate: 30 },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
@@ -79,7 +81,6 @@ async function getLocationsData(): Promise<{ count: number; locations: LocationH
 async function getGlobalHealthMetrics(): Promise<{ count: number; alerts: any[]; error?: string }> {
   try {
     const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/alerts?limit=100`, {
-      cache: 'no-store',
       next: { revalidate: 30 },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
@@ -100,11 +101,30 @@ function getStatusBadge(status: string, severity: string) {
   return <Badge variant="default" className="flex items-center gap-1"><CheckCircle className="h-3 w-3" />Operational</Badge>;
 }
 
-export default async function LocationsPage() {
-  const [locationsData, healthData] = await Promise.all([
-    getLocationsData(),
-    getGlobalHealthMetrics()
-  ]);
+export default function LocationsPage() {
+  const [locationsData, setLocationsData] = useState<{ count: number; locations: LocationHealth[]; hierarchy: HierarchicalLocation[]; error?: string }>({ count: 0, locations: [], hierarchy: [] });
+  const [healthData, setHealthData] = useState<{ count: number; alerts: any[]; error?: string }>({ count: 0, alerts: [] });
+  const [activeTab, setActiveTab] = useState("cards");
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setIsLoading(true);
+      try {
+        const [locationsRes, healthRes] = await Promise.all([
+          getLocationsData(),
+          getGlobalHealthMetrics()
+        ]);
+        setLocationsData(locationsRes);
+        setHealthData(healthRes);
+      } catch (error) {
+        console.error('Error fetching data:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
 
   const hasConnectionError = locationsData.error || healthData.error;
   const locations = locationsData.locations || [];
@@ -118,35 +138,38 @@ export default async function LocationsPage() {
 
   // Create hierarchical location items
   const countryItems = hierarchy.map(country => ({
-    slug: country.name.toLowerCase().replace(/\s+/g, '-'),
+    slug: country.name === 'Unknown' ? '' : country.name.toLowerCase().replace(/\s+/g, '-'), // Empty slug for Unknown country at root
     title: country.name,
     level: 'country' as const,
+    path: country.path,
     data: [
-      { name: "Healthy", value: country.healthyDevices },
-      { name: "Warning", value: country.warningDevices },
-      { name: "Critical", value: country.criticalDevices }
+      { name: "Healthy" as "Healthy", value: country.healthyDevices },
+      { name: "Warning" as "Warning", value: country.warningDevices },
+      { name: "Critical" as "Critical", value: country.criticalDevices }
     ],
     deviceCount: country.deviceCount,
     lastSeen: country.lastSeen,
     children: country.children.map(city => ({
-      slug: `${country.name.toLowerCase()}-${city.name.toLowerCase()}`.replace(/\s+/g, '-'),
+      slug: city.name === 'Unknown' ? country.name.toLowerCase().replace(/\s+/g, '-') : `${country.name.toLowerCase()}/${city.name.toLowerCase()}`.replace(/\s+/g, '-'),
       title: city.name,
       level: 'city' as const,
+      path: city.path,
       data: [
-        { name: "Healthy", value: city.healthyDevices },
-        { name: "Warning", value: city.warningDevices },
-        { name: "Critical", value: city.criticalDevices }
+        { name: "Healthy" as "Healthy", value: city.healthyDevices },
+        { name: "Warning" as "Warning", value: city.warningDevices },
+        { name: "Critical" as "Critical", value: city.criticalDevices }
       ],
       deviceCount: city.deviceCount,
       lastSeen: city.lastSeen,
       children: city.children.map(office => ({
-        slug: `${country.name.toLowerCase()}-${city.name.toLowerCase()}-${office.name.toLowerCase()}`.replace(/\s+/g, '-'),
+        slug: office.name === 'Main Office' ? `${country.name.toLowerCase()}/${city.name.toLowerCase()}`.replace(/\s+/g, '-') : `${country.name.toLowerCase()}/${city.name.toLowerCase()}/${office.name.toLowerCase()}`.replace(/\s+/g, '-'),
         title: office.name,
         level: 'office' as const,
+        path: office.path,
         data: [
-          { name: "Healthy", value: office.healthyDevices },
-          { name: "Warning", value: office.warningDevices },
-          { name: "Critical", value: office.criticalDevices }
+          { name: "Healthy" as "Healthy", value: office.healthyDevices },
+          { name: "Warning" as "Warning", value: office.warningDevices },
+          { name: "Critical" as "Critical", value: office.criticalDevices }
         ],
         deviceCount: office.deviceCount,
         lastSeen: office.lastSeen,
@@ -155,24 +178,30 @@ export default async function LocationsPage() {
     }))
   }));
 
+  // Filter out the 'Unknown' country at the top level if there are other countries
+  const filteredCountryItems = countryItems.length > 1 && countryItems.some(c => c.title !== 'Unknown')
+    ? countryItems.filter(c => c.title !== 'Unknown')
+    : countryItems;
+
   // Fallback data when no location data found
-  const fallbackItems = [
-    { 
-      slug: "location-not-found", 
-      title: "Location Not Found", 
-      level: 'country' as const,
+  const fallbackItems: typeof countryItems = [
+    {
+      slug: "",
+      title: "Unknown Location",
+      level: 'country',
+      path: "", // Added path property
       data: [
         { name: "Healthy", value: 0 },
         { name: "Warning", value: 0 },
         { name: "Critical", value: 0 }
-      ], 
-      deviceCount: 0, 
+      ],
+      deviceCount: 0,
       lastSeen: null,
       children: []
     }
   ];
 
-  const displayItems = countryItems.length > 0 ? countryItems : fallbackItems;
+  const displayItems = filteredCountryItems.length > 0 ? filteredCountryItems : fallbackItems;
 
   return (
     <main className="mx-auto max-w-7xl p-6">
@@ -246,7 +275,7 @@ export default async function LocationsPage() {
       </section>
 
       {/* Tabbed View for Cards and Map */}
-      <Tabs defaultValue="cards" className="mt-6">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-6">
         <TabsList className="mb-4">
           <TabsTrigger value="cards" className="flex items-center gap-2">
             <Server className="h-4 w-4" />
@@ -261,97 +290,103 @@ export default async function LocationsPage() {
         <TabsContent value="cards" className="m-0">
           {/* Hierarchical Location Health Records */}
           {displayItems.length > 0 && displayItems.some(loc => loc.deviceCount > 0) ? (
-        <section className="space-y-8">
-          {displayItems
-            .filter(loc => loc.deviceCount > 0) // Only show locations with devices
-            .map((country) => (
-            <div key={country.slug} className="space-y-4">
-              {/* Country Level */}
-              <Link href={`/locations/${country.slug}`} className="block">
-                <Card className="hover:shadow-lg transition-shadow border-2">
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <span className="text-2xl">🌍</span>
-                      {country.title}
-                    </CardTitle>
-                    <CardDescription>
-                      {country.deviceCount} devices across {country.children.length} cities • {country.lastSeen ? `Last seen: ${new Date(country.lastSeen).toLocaleString()}` : 'No recent activity'}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="h-32">
-                      <HealthChart title="" data={country.data} />
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
-
-              {/* Cities Level */}
-              {country.children.length > 0 && (
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 ml-4">
-                  {country.children
-                    .filter(city => city.deviceCount > 0)
-                    .map((city) => (
-                    <div key={city.slug} className="space-y-2">
-                      <Link href={`/locations/${country.slug}/${city.slug}`} className="block">
-                        <Card className="hover:shadow-lg transition-shadow">
-                          <CardHeader className="pb-2">
-                            <CardTitle className="flex items-center gap-2 text-lg">
-                              <span className="text-xl">🏙️</span>
-                              {city.title}
-                            </CardTitle>
-                            <CardDescription>
-                              {city.deviceCount} devices • {city.children.length} offices
-                            </CardDescription>
-                          </CardHeader>
-                          <CardContent>
-                            <div className="h-24">
-                              <HealthChart title="" data={city.data} />
-                            </div>
-                          </CardContent>
-                        </Card>
-                      </Link>
-
-                      {/* Offices Level */}
-                      {city.children.length > 0 && (
-                        <div className="grid gap-2 ml-4">
-                          {city.children
-                            .filter(office => office.deviceCount > 0)
-                            .map((office) => (
-                            <Link key={office.slug} href={`/locations/${country.slug}/${city.slug}/${office.slug}`} className="block">
-                              <Card className="hover:shadow-md transition-shadow border-l-4 border-l-blue-200">
-                                <CardHeader className="py-2">
-                                  <CardTitle className="flex items-center gap-2 text-sm">
-                                    <span className="text-lg">🏢</span>
-                                    {office.title}
-                                  </CardTitle>
-                                  <CardDescription className="text-xs">
-                                    {office.deviceCount} devices
-                                    {office.deviceDistribution && (
-                                      <span className="ml-2">
-                                        • {office.deviceDistribution.switches} switches • {office.deviceDistribution.routers} routers • {office.deviceDistribution.pcs} PCs
-                                      </span>
-                                    )}
-                                  </CardDescription>
-                                </CardHeader>
-                                <CardContent className="py-2">
-                                  <div className="h-16">
-                                    <HealthChart title="" data={office.data} />
-                                  </div>
-                                </CardContent>
-                              </Card>
+                <section className="space-y-8">
+                  {displayItems
+                    .filter(loc => loc.deviceCount > 0) // Only show locations with devices
+                    .map((country) => (
+                      <div key={country.slug} className="space-y-4">
+                        {/* Country Level */}
+                          <Card className="hover:shadow-lg transition-shadow border-2">
+                            <Link href={country.path} className="block p-4">
+                              <CardHeader className="space-y-0 pb-2">
+                                <CardTitle className="flex items-center gap-2">
+                                  <span className="text-2xl">🌍</span>
+                                  {country.title}
+                                </CardTitle>
+                                <CardDescription>
+                                  {country.deviceCount} devices across {country.children.length} cities • {country.lastSeen ? `Last seen: ${new Date(country.lastSeen).toLocaleString()}` : 'No recent activity'}
+                                </CardDescription>
+                              </CardHeader>
+                              <CardContent className="pt-0">
+                                <div className="h-32">
+                                  <HealthChart title="" data={country.data} />
+                                </div>
+                              </CardContent>
                             </Link>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </section>
-      ) : (
+                          </Card>
+
+                        {/* Cities Level */}
+                        {country.children.length > 0 && (
+                          <div className="mt-4 pl-4 space-y-4">
+                            <h3 className="text-lg font-semibold">Cities in {country.title}</h3>
+                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                              {country.children
+                                .filter(city => city.deviceCount > 0)
+                                .map((city) => (
+                                  <div key={city.slug} className="space-y-2">
+                                      <Card className="hover:shadow-lg transition-shadow">
+                                        <Link href={city.path} className="block p-4">
+                                          <CardHeader className="pb-2 space-y-0">
+                                            <CardTitle className="flex items-center gap-2 text-lg">
+                                              <span className="text-xl">🏙️</span>
+                                              {city.title}
+                                            </CardTitle>
+                                            <CardDescription>
+                                              {city.deviceCount} devices • {city.children.length} offices
+                                            </CardDescription>
+                                          </CardHeader>
+                                          <CardContent className="pt-0">
+                                            <div className="h-24">
+                                              <HealthChart title="" data={city.data} />
+                                            </div>
+                                          </CardContent>
+                                        </Link>
+                                      </Card>
+
+                                    {/* Offices Level */}
+                                    {city.children.length > 0 && (
+                                      <div className="mt-2 pl-4 space-y-2">
+                                        <h4 className="text-base font-semibold">Offices in {city.title}</h4>
+                                        <div className="grid gap-2">
+                                          {city.children
+                                            .filter(office => office.deviceCount > 0)
+                                            .map((office) => (
+                                              <Card key={office.slug} className="hover:shadow-md transition-shadow border-l-4 border-l-blue-200">
+                                                <Link href={office.path} className="block p-3">
+                                                  <CardHeader className="py-2 space-y-0">
+                                                    <CardTitle className="flex items-center gap-2 text-sm">
+                                                      <span className="text-lg">🏢</span>
+                                                      {office.title}
+                                                    </CardTitle>
+                                                    <CardDescription className="text-xs">
+                                                      {office.deviceCount} devices
+                                                      {office.deviceDistribution && (
+                                                        <span className="ml-2">
+                                                          • {office.deviceDistribution.switches} switches • {office.deviceDistribution.routers} routers • {office.deviceDistribution.pcs} PCs
+                                                        </span>
+                                                      )}
+                                                    </CardDescription>
+                                                  </CardHeader>
+                                                  <CardContent className="py-2 pt-0">
+                                                    <div className="h-16">
+                                                      <HealthChart title="" data={office.data} />
+                                                    </div>
+                                                  </CardContent>
+          </Link>
+                                              </Card>
+                                            ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+        ))}
+      </section>
+              ) : (
         <section className="text-center py-12">
           <MapPin className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
           <h3 className="text-lg font-semibold mb-2">No Device Locations Found</h3>
@@ -361,62 +396,69 @@ export default async function LocationsPage() {
           <p className="text-sm text-muted-foreground">
             Make sure your monitoring agent is collecting location data and sending it to the database.
           </p>
-        </section>
+      </section>
       )}
         </TabsContent>
 
         <TabsContent value="map" className="m-0">
-          {displayItems.length > 0 && displayItems.some(loc => loc.deviceCount > 0) ? (
-            <LocationMapWrapper 
-              locations={displayItems.map(country => ({
-                level: 'country' as const,
-                name: country.title,
-                slug: country.slug,
-                metrics: {
-                  Healthy: country.data.find(d => d.name === 'Healthy')?.value || 0,
-                  Warning: country.data.find(d => d.name === 'Warning')?.value || 0,
-                  Critical: country.data.find(d => d.name === 'Critical')?.value || 0
-                },
-                deviceCount: country.deviceCount,
-                children: country.children.map(city => ({
-                  level: 'city' as const,
-                  name: city.title,
-                  slug: city.slug,
-                  metrics: {
-                    Healthy: city.data.find(d => d.name === 'Healthy')?.value || 0,
-                    Warning: city.data.find(d => d.name === 'Warning')?.value || 0,
-                    Critical: city.data.find(d => d.name === 'Critical')?.value || 0
-                  },
-                  deviceCount: city.deviceCount,
-                  children: city.children.map(office => ({
-                    level: 'office' as const,
-                    name: office.title,
-                    slug: office.slug,
+          {activeTab === "map" && (
+            <>
+              {displayItems.length > 0 && displayItems.some(loc => loc.deviceCount > 0) ? (
+                <LocationMapWrapper 
+                  locations={displayItems.map(country => ({
+                    level: 'country' as const,
+                    name: country.title,
+                    slug: country.slug,
+                    path: country.path,
                     metrics: {
-                      Healthy: office.data.find(d => d.name === 'Healthy')?.value || 0,
-                      Warning: office.data.find(d => d.name === 'Warning')?.value || 0,
-                      Critical: office.data.find(d => d.name === 'Critical')?.value || 0
+                      Healthy: country.data.find(d => d.name === 'Healthy')?.value || 0,
+                      Warning: country.data.find(d => d.name === 'Warning')?.value || 0,
+                      Critical: country.data.find(d => d.name === 'Critical')?.value || 0
                     },
-                    deviceCount: office.deviceCount
-                  }))
-                }))
-              }))}
-            />
-          ) : (
-            <div className="text-center py-12">
-              <MapPin className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">No Location Data Available</h3>
-              <p className="text-muted-foreground">
-                Location data will appear here once devices are monitored.
-              </p>
-            </div>
+                    deviceCount: country.deviceCount,
+                    children: country.children.map(city => ({
+                      level: 'city' as const,
+                      name: city.title,
+                      slug: city.slug,
+                      path: city.path,
+                      metrics: {
+                        Healthy: city.data.find(d => d.name === 'Healthy')?.value || 0,
+                        Warning: city.data.find(d => d.name === 'Warning')?.value || 0,
+                        Critical: city.data.find(d => d.name === 'Critical')?.value || 0
+                      },
+                      deviceCount: city.deviceCount,
+                      children: city.children.map(office => ({
+                        level: 'office' as const,
+                        name: office.title,
+                        slug: office.slug,
+                        path: office.path,
+                        metrics: {
+                          Healthy: office.data.find(d => d.name === 'Healthy')?.value || 0,
+                          Warning: office.data.find(d => d.name === 'Warning')?.value || 0,
+                          Critical: office.data.find(d => d.name === 'Critical')?.value || 0
+                        },
+                        deviceCount: office.deviceCount
+                      }))
+                    }))
+                  }))}
+                />
+              ) : (
+                <div className="text-center py-12">
+                  <MapPin className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold mb-2">No Location Data Available</h3>
+                  <p className="text-muted-foreground">
+                    Location data will appear here once devices are monitored.
+                  </p>
+                </div>
+              )}
+            </>
           )}
         </TabsContent>
       </Tabs>
 
       {/* Global Health Summary - Only show if there are locations with devices */}
       {locations.length > 0 && locations.some(loc => loc.deviceCount > 0) && (
-        <section className="mt-6 grid gap-6 md:grid-cols-2">
+      <section className="mt-6 grid gap-6 md:grid-cols-2">
           <Card>
             <CardHeader>
               <CardTitle>Global Health Distribution</CardTitle>
@@ -463,7 +505,7 @@ export default async function LocationsPage() {
               </div>
             </CardContent>
           </Card>
-        </section>
+      </section>
       )}
     </main>
   )

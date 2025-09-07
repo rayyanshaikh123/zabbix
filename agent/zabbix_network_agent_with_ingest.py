@@ -15,17 +15,18 @@ import requests
 from typing import Optional, Dict, Any, List
 
 # ------------- CONFIG -------------
-ZABBIX_URL = os.environ.get("ZABBIX_URL", "http://192.168.2.20/zabbix/api_jsonrpc.php")
-API_TOKEN = os.environ.get("ZABBIX_API_TOKEN") or "<paste-your-api-token-here>"
+ZABBIX_URL = os.environ.get("ZABBIX_URL", "http://192.168.0.134/zabbix/api_jsonrpc.php")
+API_TOKEN = os.environ.get("ZABBIX_API_TOKEN", "4479cc87bee80c0d355b4c0480ce574cc0853d25dbb777f72745fd55e2e68974")
 HEADERS = {"Content-Type": "application/json-rpc", "Authorization": f"Bearer {API_TOKEN}"}
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "30"))
 CACHE_FILE = os.environ.get("CACHE_FILE", "counter_cache.json")
-BACKEND_URL = os.environ.get("BACKEND_URL")  # e.g. http://127.0.0.1:8000
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")  # FastAPI backend for netmon database
 BACKEND_METRICS_ENDPOINT = (BACKEND_URL.rstrip("/") + "/ingest/metrics") if BACKEND_URL else None
 BACKEND_EVENTS_ENDPOINT = (BACKEND_URL.rstrip("/") + "/ingest/events") if BACKEND_URL else None
+# Removed NOMINATIM_REVERSE_GEOCODE_URL and GEOIP_URL is for IP-based lookup which is a fallback
 GEOIP_URL = "http://ip-api.com/json/"
 
-NETWORK_ITEM_TERMS = ["ifIn", "ifOut", "ifDescr", "ifInOctets", "ifOutOctets", "ifHCInOctets", "ifHCOutOctets", "ifSpeed", "ifHighSpeed", "ifOperStatus"]
+NETWORK_ITEM_TERMS = ["ifIn", "ifOut", "ifDescr", "ifInOctets", "ifOutOctets", "ifHCInOctets", "ifHCOutOctets", "ifSpeed", "ifHighSpeed", "ifOperStatus", "Interface", "Network", "Traffic", "Port", "Link", "Bits received", "Bits sent", "Operational status", "Duplex status", "Speed", "Inbound packets", "Outbound packets"]
 
 # ------------- JSON-RPC helper -------------
 def api_call(method: str, params: dict = None, req_id: int = 1, timeout: int = 10) -> dict:
@@ -83,6 +84,8 @@ def geoip_lookup(ip: str) -> dict:
     except Exception:
         return {}
 
+# Removed reverse_geocode_coordinates function
+
 def parse_ifindex_from_key(key: str) -> Optional[str]:
     m = re.search(r"\[(\d+)\]", key)
     return m.group(1) if m else None
@@ -125,7 +128,7 @@ def oper_status_is_up(value: str) -> Optional[bool]:
 
 # ------------- discovery & items -------------
 def discover_hosts() -> List[dict]:
-    params = {"output": ["hostid", "host", "name"], "selectInventory": ["type", "type_full"], "selectInterfaces": ["interfaceid", "ip", "type", "dns"]}
+    params = {"output": ["hostid", "host", "name"], "selectInventory": ["type", "type_full", "location", "location_lat", "location_lon", "asset_tag"], "selectInterfaces": ["interfaceid", "ip", "type", "dns"]}
     resp = api_call("host.get", params, req_id=101)
     if "error" in resp:
         print("[ERROR] host.get:", resp["error"])
@@ -194,8 +197,9 @@ def post_with_retries(url: str, json_payload, max_retries: int = 3, backoff: flo
 
 # ------------- main loop -------------
 def main():
-    if not API_TOKEN or API_TOKEN.startswith("<paste"):
-        print("ERROR: Set ZABBIX_API_TOKEN env or edit the script.")
+    if not API_TOKEN:
+        print("ERROR: Set ZABBIX_API_TOKEN environment variable.")
+        print("Example: export ZABBIX_API_TOKEN='your-zabbix-api-token-here'")
         sys.exit(1)
 
     cache = load_cache()
@@ -207,10 +211,25 @@ def main():
     network_hosts = []
     for h in hosts:
         hid = h.get("hostid")
+        hostname = h.get("host", "").lower()
+        
+        # Skip Zabbix server
+        if "zabbix" in hostname or "server" in hostname:
+            continue
+            
         if not hid:
             continue
-        items_check = api_call("item.get", {"output": ["itemid"], "hostids": hid, "search": {"name": "ifIn"}, "limit": 1}, req_id=501)
-        if "result" in items_check and items_check["result"]:
+        # Check for various network interface patterns
+        network_patterns = ["ifIn", "ifOut", "Interface", "Network", "Traffic", "Bits received", "Bits sent", "Operational status"]
+        found_network_items = False
+
+        for pattern in network_patterns:
+            items_check = api_call("item.get", {"output": ["itemid"], "hostids": hid, "search": {"name": pattern}, "limit": 1}, req_id=501)
+            if "result" in items_check and items_check["result"]:
+                found_network_items = True
+                break
+
+        if found_network_items:
             network_hosts.append(h)
             continue
         inv = h.get("inventory") or {}
@@ -237,19 +256,79 @@ def main():
             dev = nh.get("host")
             interfaces = nh.get("interfaces") or []
             ip_for_geo = interfaces[0].get("ip") if interfaces else None
-            geo = geoip_lookup(ip_for_geo) if ip_for_geo else {}
+            
+            # Extract inventory location and coordinates if available
+            raw_inventory = nh.get("inventory", {}) # This might be a list or a dict
+            
+            zabbix_location = None
+            zabbix_lat = None
+            zabbix_lon = None
+
+            # Safely extract inventory details, assuming it's a list of dicts
+            if isinstance(raw_inventory, list) and raw_inventory:
+                for inv_item in raw_inventory:
+                    if isinstance(inv_item, dict):
+                        zabbix_location = inv_item.get("location")
+                        zabbix_lat = inv_item.get("location_lat")
+                        zabbix_lon = inv_item.get("location_lon")
+                        if zabbix_location or (zabbix_lat and zabbix_lon): # Found relevant data
+                            break
+            elif isinstance(raw_inventory, dict): # Handle case where it might be a single dict
+                zabbix_location = raw_inventory.get("location")
+                zabbix_lat = raw_inventory.get("location_lat")
+                zabbix_lon = raw_inventory.get("location_lon")
+
+            # Prepare geo object with raw Zabbix coordinates and location string
+            geo = {
+                "lat": float(zabbix_lat) if zabbix_lat else None,
+                "lon": float(zabbix_lon) if zabbix_lon else None,
+                "zabbix_location_str": zabbix_location if zabbix_location and zabbix_location != "" else None,
+                "source": "zabbix_inventory"
+            }
+            
+            # Fallback to GeoIP if no Zabbix coords provided
+            if (geo["lat"] is None or geo["lon"] is None) and ip_for_geo:
+                geoip_data = geoip_lookup(ip_for_geo) or {}
+                if geoip_data:
+                    geo["lat"] = geoip_data.get("lat")
+                    geo["lon"] = geoip_data.get("lon")
+                    geo["country"] = geoip_data.get("country")
+                    geo["city"] = geoip_data.get("city")
+                    geo["source"] = "geoip_fallback"
+            
+            # The location_str will be determined by the frontend API using geocoding
+            location_str = geo["zabbix_location_str"] or geo.get("city", "Unknown Location")
+
             mapping = ifdescr_maps.get(hostid, {})
 
             items = get_items_for_host(hostid)
             if not items:
-                print(f"[{dev}] no items.")
+                print(f"[{dev}] no items found at all.")
                 continue
 
+            print(f"[{dev}] found {len(items)} total items")
+
             by_iface = {}
+            network_items_found = 0
             for it in items:
                 key = it.get("key_") or ""
-                idx = parse_ifindex_from_key(key) or "_global"
-                by_iface.setdefault(idx, []).append(it)
+                name = it.get("name") or ""
+
+                # Check if this is a network-related item
+                is_network_item = any(term.lower() in key.lower() or term.lower() in name.lower() for term in NETWORK_ITEM_TERMS)
+
+                if is_network_item:
+                    network_items_found += 1
+                    idx = parse_ifindex_from_key(key) or "_global"
+                    by_iface.setdefault(idx, []).append(it)
+
+            print(f"[{dev}] found {network_items_found} network-related items out of {len(items)} total items")
+
+            if network_items_found == 0:
+                print(f"[{dev}] no network items found. Sample item names:")
+                for i, item in enumerate(items[:5]):  # Show first 5 items
+                    print(f"  {i+1}. Name: {item.get('name', 'N/A')}, Key: {item.get('key_', 'N/A')}")
+                continue
 
             for idx, its in by_iface.items():
                 iface_label = mapping.get(idx) if idx != "_global" else None
@@ -277,22 +356,25 @@ def main():
                     raw_value = it.get("lastvalue") or "0"
                     vt = int(it.get("value_type") or 3)
 
-                    # compute rate
+                    # compute rate for network traffic items
                     rate_bps = None
-                    hist = history_last_two(itemid, value_type=vt)
-                    if hist and len(hist) >= 2:
-                        new = hist[0]; old = hist[1]
-                        try:
-                            new_v = float(new["value"]); old_v = float(old["value"])
-                            new_ts = int(new["clock"]); old_ts = int(old["clock"])
-                            maxc = guess_counter_max(key)
-                            bps = safe_compute_rate(old_v, old_ts, new_v, new_ts, maxc)
-                            if bps is not None:
-                                rate_bps = bps * 8.0
-                        except Exception:
-                            rate_bps = None
+                    is_traffic_item = any(term.lower() in name.lower() for term in ["bits received", "bits sent", "ifin", "ifout", "octets"])
+                    
+                    if is_traffic_item:
+                        hist = history_last_two(itemid, value_type=vt)
+                        if hist and len(hist) >= 2:
+                            new = hist[0]; old = hist[1]
+                            try:
+                                new_v = float(new["value"]); old_v = float(old["value"])
+                                new_ts = int(new["clock"]); old_ts = int(old["clock"])
+                                maxc = guess_counter_max(key)
+                                bps = safe_compute_rate(old_v, old_ts, new_v, new_ts, maxc)
+                                if bps is not None:
+                                    rate_bps = bps * 8.0
+                            except Exception:
+                                rate_bps = None
 
-                    if rate_bps is None:
+                    if rate_bps is None and is_traffic_item:
                         try:
                             current_val = float(raw_value)
                             current_ts = int(time.time())
@@ -316,7 +398,7 @@ def main():
                     for j in its:
                         jkey = j.get("key_") or ""
                         jname = (j.get("name") or "").lower()
-                        if "oper" in jname or "operstatus" in jkey.lower() or "ifoperstatus" in jkey.lower():
+                        if any(term in jname for term in ["operational status", "oper status", "operstatus"]) or "ifoperstatus" in jkey.lower():
                             try:
                                 oper_up = oper_status_is_up(j.get("lastvalue"))
                                 break
@@ -347,6 +429,9 @@ def main():
                     except Exception:
                         numeric_value = None
 
+                    # Determine if this is a counter or gauge
+                    is_counter = any(term.lower() in name.lower() for term in ["bits received", "bits sent", "ifin", "ifout", "octets", "packets"])
+                    
                     metric_doc = {
                         "ts": int(time.time()),
                         "meta": {
@@ -354,11 +439,12 @@ def main():
                             "hostid": hostid,
                             "ifindex": idx if idx != "_global" else None,
                             "ifdescr": iface_label if iface_label else None,
-                            "geo": geo or None
+                            "location": location_str, # Use the determined location string
+                            "geo": geo or None # Store full geo object
                         },
                         "metric": key or name,
                         "value": numeric_value if numeric_value is not None else raw_value,
-                        "value_type": "counter" if "ifIn" in (key or "") or "ifOut" in (key or "") else "gauge"
+                        "value_type": "counter" if is_counter else "gauge"
                     }
                     all_metrics.append(metric_doc)
 
@@ -373,6 +459,7 @@ def main():
                             "status": status,
                             "severity": "warning" if "High" in status else "critical" if "Operational" in status else "info",
                             "detected_at": int(time.time()),
+                            "location": location_str, # Use the determined location string
                             "evidence": {"rate_bps": rate_bps, "link_speed_bps": link_speed_bps},
                             "labels": [label for label in ([ "link-down" ] if "Operational" in status else ["high-bandwidth"] if "High bandwidth" in status else [])]
                         }

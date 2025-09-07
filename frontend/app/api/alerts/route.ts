@@ -26,8 +26,12 @@ export async function GET(request: NextRequest) {
 
     const eventsCollection = await getCollection('events');
 
-    // Build query
-    const query: any = {};
+    // Build query - exclude Zabbix server by default
+    const query: any = {
+      device_id: { 
+        $not: { $regex: /zabbix|server/i } 
+      }
+    };
 
     if (severity) {
       query.severity = severity;

@@ -3,6 +3,11 @@ import { LogPanel } from "@/components/log-panel"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { AlertTriangle, CheckCircle, Clock, Activity, Server, Wifi, Monitor, TrendingUp } from "lucide-react"
+import Link from "next/link"
+import { HealthChart } from "@/components/charts/health-chart"
+import { LocationMapWrapper } from "@/components/map/location-map-wrapper"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Map, MapPin } from "lucide-react"
 
 interface Host {
   hostid: string;
@@ -39,10 +44,28 @@ interface Metric {
   value_type: string;
 }
 
+interface HierarchicalLocation {
+  level: 'country' | 'city' | 'office';
+  name: string;
+  path: string;
+  deviceCount: number;
+  healthyDevices: number;
+  warningDevices: number;
+  criticalDevices: number;
+  lastSeen: Date | null;
+  children: HierarchicalLocation[];
+  deviceDistribution?: {
+    switches: number;
+    routers: number;
+    pcs: number;
+    interfaces: number;
+    other: number;
+  };
+}
+
 async function getHostsData(): Promise<{ count: number; hosts: Host[]; error?: string }> {
   try {
     const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/hosts`, {
-      cache: 'no-store',
       next: { revalidate: 30 },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
@@ -56,7 +79,6 @@ async function getHostsData(): Promise<{ count: number; hosts: Host[]; error?: s
 async function getAlertsData(): Promise<{ count: number; alerts: Alert[]; error?: string }> {
   try {
     const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/alerts?limit=20`, {
-      cache: 'no-store',
       next: { revalidate: 30 },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
@@ -71,7 +93,6 @@ async function getMetricsData(): Promise<{ count: number; data: Metric[]; error?
   try {
     // Get metrics from all hosts for system overview
     const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/metrics/all?limit=100`, {
-      cache: 'no-store',
       next: { revalidate: 30 },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
@@ -79,6 +100,20 @@ async function getMetricsData(): Promise<{ count: number; data: Metric[]; error?
   } catch (error) {
     console.error('Error fetching metrics:', error);
     return { count: 0, data: [], error: error instanceof Error ? error.message : 'Failed to fetch metrics' };
+  }
+}
+
+// Fetch location data from API
+async function getLocationsData(): Promise<{ count: number; locations: any[]; hierarchy: HierarchicalLocation[]; error?: string }> {
+  try {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/locations`, {
+      next: { revalidate: 30 },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    return res.json();
+  } catch (error) {
+    console.error('Error fetching locations:', error);
+    return { count: 0, locations: [], hierarchy: [], error: error instanceof Error ? error.message : 'Failed to fetch locations' };
   }
 }
 
@@ -100,18 +135,21 @@ function getStatusBadge(status: string, severity: string) {
 }
 
 export default async function DashboardPage() {
-  const [hostsData, alertsData, metricsData] = await Promise.all([
+  const [hostsData, alertsData, metricsData, locationsData] = await Promise.all([
     getHostsData(),
     getAlertsData(),
-    getMetricsData()
+    getMetricsData(),
+    getLocationsData(),
   ]);
 
-  const hasConnectionError = hostsData.error || alertsData.error || metricsData.error;
+  const hasConnectionError = hostsData.error || alertsData.error || metricsData.error || locationsData.error;
   
   // Add fallbacks for when data is undefined
   const hosts = hostsData.hosts || [];
   const alerts = alertsData.alerts || [];
   const metrics = metricsData.data || [];
+  const locations = locationsData.locations || [];
+  const hierarchy = locationsData.hierarchy || [];
   
   const criticalAlerts = alerts.filter(alert => alert.severity === 'critical').length;
   const warningAlerts = alerts.filter(alert => alert.severity === 'warning').length;
@@ -122,17 +160,97 @@ export default async function DashboardPage() {
   // Get unique metrics for system overview
   const uniqueMetrics = [...new Set(metrics.map(m => m.metric))].length;
   const recentMetrics = metrics.slice(0, 10);
+  
+  // Get interface-specific metrics
+  const interfaceMetrics = metrics.filter(m => m.meta.ifdescr && m.meta.ifdescr !== '_global');
+  const trafficMetrics = metrics.filter(m => 
+    m.metric.includes('Bits received') || m.metric.includes('Bits sent')
+  );
+  const statusMetrics = metrics.filter(m => 
+    m.metric.includes('Operational status') || m.metric.includes('Duplex status')
+  );
+  
+  // Calculate total traffic
+  const totalTrafficIn = trafficMetrics
+    .filter(m => m.metric.includes('Bits received'))
+    .reduce((sum, m) => sum + (typeof m.value === 'number' ? m.value : 0), 0);
+  const totalTrafficOut = trafficMetrics
+    .filter(m => m.metric.includes('Bits sent'))
+    .reduce((sum, m) => sum + (typeof m.value === 'number' ? m.value : 0), 0);
+
+  // Create hierarchical location items for display
+  const countryItems = hierarchy.map(country => ({
+    slug: country.name === 'Unknown' ? '' : country.name.toLowerCase().replace(/\s+/g, '-'),
+    title: country.name,
+    level: 'country' as const,
+    path: country.path,
+    data: [
+      { name: "Healthy", value: country.healthyDevices },
+      { name: "Warning", value: country.warningDevices },
+      { name: "Critical", value: country.criticalDevices }
+    ],
+    deviceCount: country.deviceCount,
+    lastSeen: country.lastSeen,
+    children: country.children.map(city => ({
+      slug: city.name === 'Unknown' ? country.name.toLowerCase().replace(/\s+/g, '-') : `${country.name.toLowerCase()}/${city.name.toLowerCase()}`.replace(/\s+/g, '-'),
+      title: city.name,
+      level: 'city' as const,
+      path: city.path,
+      data: [
+        { name: "Healthy", value: city.healthyDevices },
+        { name: "Warning", value: city.warningDevices },
+        { name: "Critical", value: city.criticalDevices }
+      ],
+      deviceCount: city.deviceCount,
+      lastSeen: city.lastSeen,
+      children: city.children.map(office => ({
+        slug: office.name === 'Main Office' ? `${country.name.toLowerCase()}/${city.name.toLowerCase()}`.replace(/\s+/g, '-') : `${country.name.toLowerCase()}/${city.name.toLowerCase()}/${office.name.toLowerCase()}`.replace(/\s+/g, '-'),
+        title: office.name,
+        level: 'office' as const,
+        path: office.path,
+        data: [
+          { name: "Healthy", value: office.healthyDevices },
+          { name: "Warning", value: office.warningDevices },
+          { name: "Critical", value: office.criticalDevices }
+        ],
+        deviceCount: office.deviceCount,
+        lastSeen: office.lastSeen,
+        deviceDistribution: office.deviceDistribution
+      }))
+    }))
+  }));
+
+  const filteredCountryItems = countryItems.length > 1 && countryItems.some(c => c.name !== 'Unknown')
+    ? countryItems.filter(c => c.name !== 'Unknown')
+    : countryItems;
+
+  const displayItems = filteredCountryItems.length > 0 ? filteredCountryItems : [
+    {
+      slug: "",
+      title: "Unknown Location",
+      level: 'country' as const,
+      path: "/locations", // Link to the main locations page
+      data: [
+        { name: "Healthy", value: 0 },
+        { name: "Warning", value: 0 },
+        { name: "Critical", value: 0 }
+      ],
+      deviceCount: 0,
+      lastSeen: null,
+      children: []
+    }
+  ];
 
   return (
     <main className="mx-auto max-w-7xl p-6">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold text-balance">Network Monitoring Dashboard</h1>
-        <p className="text-sm text-muted-foreground">Real-time network device monitoring, system metrics, and agent logs.</p>
+        <p className="text-sm text-muted-foreground">Global overview of network device health and performance.</p>
         {hasConnectionError && (
           <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
             <h3 className="text-red-800 font-medium">Database Connection Issue</h3>
             <p className="text-red-600 text-sm mt-1">
-              {hostsData.error || alertsData.error || metricsData.error}
+              {hostsData.error || alertsData.error || metricsData.error || locationsData.error}
             </p>
             <p className="text-red-600 text-sm mt-2">
               Make sure MongoDB is configured correctly and the monitoring agent is running.
@@ -141,11 +259,11 @@ export default async function DashboardPage() {
         )}
       </header>
 
-      {/* System Overview Cards */}
+      {/* Global Health Overview Cards */}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Monitored Hosts</CardTitle>
+            <CardTitle className="text-sm font-medium">Total Monitored Devices</CardTitle>
             <Server className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -158,7 +276,7 @@ export default async function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Interfaces</CardTitle>
+            <CardTitle className="text-sm font-medium">Total Active Interfaces</CardTitle>
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -169,18 +287,20 @@ export default async function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">System Metrics</CardTitle>
+            <CardTitle className="text-sm font-medium">Total Network Traffic</CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{uniqueMetrics}</div>
-            <p className="text-xs text-muted-foreground">Unique metrics tracked</p>
+            <div className="text-2xl font-bold">{(totalTrafficIn + totalTrafficOut).toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">
+              {totalTrafficIn.toLocaleString()} in, {totalTrafficOut.toLocaleString()} out
+            </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Critical Alerts</CardTitle>
+            <CardTitle className="text-sm font-medium">Global Critical Alerts</CardTitle>
             <AlertTriangle className="h-4 w-4 text-red-600" />
           </CardHeader>
           <CardContent>
@@ -191,157 +311,6 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
       </section>
-
-      {/* System Monitoring and Agent Logs */}
-      <section className="grid gap-6 lg:grid-cols-2 mb-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>System Monitoring</CardTitle>
-            <CardDescription>Recent metrics from all monitored devices</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {recentMetrics.map((metric) => (
-                <div key={metric._id} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex items-center space-x-3">
-                    {getDeviceIcon(metric.meta.device_id)}
-                    <div>
-                      <p className="font-medium text-sm">{metric.meta.device_id}</p>
-                      <p className="text-xs text-muted-foreground">{metric.metric}</p>
-                      {metric.meta.ifdescr && (
-                        <p className="text-xs text-muted-foreground">Interface: {metric.meta.ifdescr}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-medium">{metric.value}</p>
-                    <p className="text-xs text-muted-foreground">{metric.value_type}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(metric.ts * 1000).toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-              ))}
-              {recentMetrics.length === 0 && (
-                <p className="text-muted-foreground text-center py-8">No metrics available</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Agent Logs & Alerts</CardTitle>
-            <CardDescription>Latest alerts and notifications from monitoring agents</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {alerts.slice(0, 10).map((alert) => (
-                <div key={alert._id} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex items-center space-x-3">
-                    {getDeviceIcon(alert.device_id)}
-                    <div>
-                      <p className="font-medium text-sm">{alert.device_id}</p>
-                      <p className="text-xs text-muted-foreground">{alert.metric}</p>
-                      <p className="text-xs text-muted-foreground">Interface: {alert.iface}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    {getStatusBadge(alert.status, alert.severity)}
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {new Date(alert.detected_at * 1000).toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-              ))}
-              {alerts.length === 0 && (
-                <p className="text-muted-foreground text-center py-8">No alerts available</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </section>
-
-      {/* Device Status Overview */}
-      <section className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Device Status Overview</CardTitle>
-            <CardDescription>Current status of all monitored devices</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {hosts.slice(0, 8).map((host) => (
-                <div key={host.hostid} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex items-center space-x-3">
-                    {getDeviceIcon(host.device_id)}
-                    <div>
-                      <p className="font-medium">{host.device_id}</p>
-                      <p className="text-sm text-muted-foreground">ID: {host.hostid}</p>
-                      {host.interface_count && (
-                        <p className="text-xs text-muted-foreground">{host.interface_count} interfaces</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    {getStatusBadge(host.status || 'Operational', host.severity || 'info')}
-                    {host.last_seen && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Last seen: {new Date(host.last_seen).toLocaleString()}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {hosts.length === 0 && (
-                <p className="text-muted-foreground text-center py-8">No devices found</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>System Health Summary</CardTitle>
-            <CardDescription>Overall system health and performance metrics</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">System Uptime</span>
-                <Badge variant="default" className="flex items-center gap-1">
-                  <CheckCircle className="h-3 w-3" />
-                  Operational
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Data Collection</span>
-                <Badge variant="default" className="flex items-center gap-1">
-                  <Activity className="h-3 w-3" />
-                  Active
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Alert System</span>
-                <Badge variant={criticalAlerts > 0 ? "destructive" : "default"} className="flex items-center gap-1">
-                  <AlertTriangle className="h-3 w-3" />
-                  {criticalAlerts > 0 ? `${criticalAlerts} Critical` : 'Normal'}
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Monitoring Coverage</span>
-                <span className="text-sm text-muted-foreground">
-                  {hosts.length} devices, {totalInterfaces} interfaces
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="mt-6">
-        <LogPanel />
-      </section>
     </main>
-  )
+  );
 }

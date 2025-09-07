@@ -14,7 +14,6 @@ const navItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard" },
   { label: "Locations", href: "/locations" },
   { label: "Devices", href: "/devices" },
-  { label: "Logs", href: "/logs" },
   { label: "Admin", href: "/admin", adminOnly: true },
 ]
 

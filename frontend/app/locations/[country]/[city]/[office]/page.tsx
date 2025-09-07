@@ -59,7 +59,6 @@ async function getOfficeDetails(country: string, city: string, office: string): 
     const res = await fetch(
       `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/locations/${country}/${city}/${office}`,
       {
-        cache: 'no-store',
         next: { revalidate: 30 },
       }
     );

@@ -73,6 +73,12 @@ export function HierarchicalLocationMap({
   const [viewLevel, setViewLevel] = useState<'world' | 'country' | 'city'>('world')
   const [selectedCountry, setSelectedCountry] = useState<LocationData | null>(null)
   const [selectedCity, setSelectedCity] = useState<LocationData | null>(null)
+  const [mapKey, setMapKey] = useState(0)
+
+  // Reset map when locations change
+  useEffect(() => {
+    setMapKey(prev => prev + 1)
+  }, [locations])
 
   // Get coordinates for a location
   const getLocationCoordinates = useCallback((location: LocationData): [number, number] | null => {
@@ -107,6 +113,7 @@ export function HierarchicalLocationMap({
   const handleCountryClick = useCallback((country: LocationData) => {
     setSelectedCountry(country)
     setViewLevel('country')
+    setMapKey(prev => prev + 1) // Force map re-render
     router.push(`/locations/${country.slug}`)
   }, [router])
 
@@ -115,6 +122,7 @@ export function HierarchicalLocationMap({
     if (selectedCountry) {
       setSelectedCity(city)
       setViewLevel('city')
+      setMapKey(prev => prev + 1) // Force map re-render
       router.push(`/locations/${selectedCountry.slug}/${city.slug}`)
     }
   }, [selectedCountry, router])
@@ -131,9 +139,11 @@ export function HierarchicalLocationMap({
     if (viewLevel === 'city') {
       setSelectedCity(null)
       setViewLevel('country')
+      setMapKey(prev => prev + 1) // Force map re-render
     } else if (viewLevel === 'country') {
       setSelectedCountry(null)
       setViewLevel('world')
+      setMapKey(prev => prev + 1) // Force map re-render
     }
   }, [viewLevel])
 
@@ -174,6 +184,7 @@ export function HierarchicalLocationMap({
       )}
 
       <MapContainer
+        key={mapKey}
         center={[20.5937, 78.9629]}
         zoom={3}
         className="h-[600px] w-full"

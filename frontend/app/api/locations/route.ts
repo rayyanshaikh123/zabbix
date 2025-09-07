@@ -59,14 +59,28 @@ export async function GET(request: NextRequest) {
     const metricsCollection = await getCollection('metrics_ts');
     const eventsCollection = await getCollection('events');
 
-    // Get all unique devices and their locations from metrics
+    // Get all unique devices and their locations from metrics, excluding Zabbix server and devices without valid locations
     const devicesWithLocation = await metricsCollection.aggregate([
+      {
+        $match: {
+          'meta.device_id': { 
+            $not: { $regex: /zabbix|server/i } 
+          },
+          'meta.location': { 
+            $exists: true, 
+            $ne: null, 
+            $ne: '', 
+            $not: { $regex: /unknown location/i } 
+          }
+        }
+      },
       {
         $group: {
           _id: {
             hostid: '$meta.hostid',
             device_id: '$meta.device_id',
-            location: '$meta.location' // Assuming location is stored in meta
+            location: '$meta.location',
+            geo: '$meta.geo'
           },
           last_seen: { $max: '$ts' }
         }
@@ -77,6 +91,7 @@ export async function GET(request: NextRequest) {
           hostid: '$_id.hostid',
           device_id: '$_id.device_id',
           location: '$_id.location',
+          geo: '$_id.geo',
           last_seen: 1
         }
       }
@@ -111,14 +126,15 @@ export async function GET(request: NextRequest) {
     const locationMap = new Map<string, LocationHealth>();
 
     devicesWithLocation.forEach(device => {
-      const locationKey = device.location || 'Unknown Location';
+      const locationKey = device.location && device.location !== '' ? device.location : 'Unknown Location';
       
       if (location && locationKey.toLowerCase() !== location.toLowerCase()) {
         return; // Skip if location filter doesn't match
       }
 
       if (!locationMap.has(locationKey)) {
-        const hierarchy = detectLocationHierarchy(locationKey);
+        // Pass geo data along with location name
+        const hierarchy = detectLocationHierarchy(locationKey, device.geo);
         locationMap.set(locationKey, {
           location: locationKey,
           hierarchy,
@@ -181,7 +197,7 @@ export async function GET(request: NextRequest) {
         hierarchicalMap.set(country, {
           level: 'country',
           name: country,
-          path: country,
+          path: country === 'Unknown' ? '/locations' : `/${country.toLowerCase()}`,
           deviceCount: 0,
           healthyDevices: 0,
           warningDevices: 0,
@@ -199,7 +215,7 @@ export async function GET(request: NextRequest) {
         hierarchicalMap.set(cityKey, {
           level: 'city',
           name: city,
-          path: `${country} → ${city}`,
+          path: city === 'Unknown' ? `/${country.toLowerCase()}` : `/${country.toLowerCase()}/${city.toLowerCase()}`,
           deviceCount: 0,
           healthyDevices: 0,
           warningDevices: 0,
@@ -219,7 +235,7 @@ export async function GET(request: NextRequest) {
         hierarchicalMap.set(officeKey, {
           level: 'office',
           name: office,
-          path: `${country} → ${city} → ${office}`,
+          path: office === 'Main Office' ? `/${country.toLowerCase()}/${city.toLowerCase()}` : `/${country.toLowerCase()}/${city.toLowerCase()}/${office.toLowerCase()}`,
           deviceCount: 0,
           healthyDevices: 0,
           warningDevices: 0,
@@ -276,7 +292,16 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    const hierarchicalLocations = Array.from(hierarchicalMap.values()).filter(loc => loc.level === 'country');
+    const hierarchicalLocations = Array.from(hierarchicalMap.values())
+      .filter(loc => loc.level === 'country' && loc.name !== 'Unknown');
+
+    // Filter out 'Unknown' cities and 'Main Office' offices within the hierarchy
+    hierarchicalLocations.forEach(country => {
+      country.children = country.children.filter(city => city.name !== 'Unknown');
+      country.children.forEach(city => {
+        city.children = city.children.filter(office => office.name !== 'Main Office');
+      });
+    });
 
     // If no location data found, return fallback data
     if (locations.length === 0) {

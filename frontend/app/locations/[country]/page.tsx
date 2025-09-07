@@ -28,7 +28,6 @@ interface LocationHealth {
 async function getLocationData(country: string): Promise<{ count: number; locations: LocationHealth[]; error?: string }> {
   try {
     const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/locations?location=${encodeURIComponent(country)}`, {
-      cache: 'no-store',
       next: { revalidate: 30 },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
