@@ -32,8 +32,8 @@ type LogsResponse = {
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
 
-export function LogPanel() {
-  const { data } = useSWR<LogsResponse>("/api/logs", fetcher, {
+export function LogPanel({ deviceFilter }: { deviceFilter?: string }) {
+  const { data } = useSWR<LogsResponse>(`/api/logs${deviceFilter ? `?device=${deviceFilter}` : ''}`, fetcher, {
     fallbackData: {
       success: true,
       logs: [
@@ -59,20 +59,21 @@ export function LogPanel() {
   })
 
   const [filter, setFilter] = useState<"all" | "info" | "warn" | "error">("all")
-  const [deviceFilter, setDeviceFilter] = useState<string>("all")
+  const [selectedDevice, setSelectedDevice] = useState<string>(deviceFilter || "all")
   
   const filtered = useMemo(
     () => {
       const logs = data?.logs || []
       let filteredLogs = filter === "all" ? logs : logs.filter((l) => l.level === filter)
       
-      if (deviceFilter !== "all") {
-        filteredLogs = filteredLogs.filter((l) => l.device === deviceFilter)
+      const currentDeviceFilter = deviceFilter || selectedDevice
+      if (currentDeviceFilter !== "all") {
+        filteredLogs = filteredLogs.filter((l) => l.device === currentDeviceFilter)
       }
       
       return filteredLogs
     },
-    [data, filter, deviceFilter],
+    [data, filter, selectedDevice, deviceFilter],
   )
 
   // Get unique devices for filter
@@ -104,11 +105,11 @@ export function LogPanel() {
               </Button>
             ))}
           </div>
-          {uniqueDevices.length > 1 && (
+          {uniqueDevices.length > 1 && !deviceFilter && (
             <div className="flex gap-2">
               <select
-                value={deviceFilter}
-                onChange={(e) => setDeviceFilter(e.target.value)}
+                value={selectedDevice}
+                onChange={(e) => setSelectedDevice(e.target.value)}
                 className="px-3 py-1 text-sm border rounded-md bg-background"
               >
                 <option value="all">All Devices</option>

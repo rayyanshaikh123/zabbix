@@ -68,8 +68,7 @@ export async function GET(request: NextRequest) {
           },
           'meta.location': { 
             $exists: true, 
-            $ne: null, 
-            $ne: '', 
+            $nin: [null, '', 'Unknown Location'], 
             $not: { $regex: /unknown location/i } 
           }
         }
@@ -125,16 +124,16 @@ export async function GET(request: NextRequest) {
     // Group devices by location and build hierarchy
     const locationMap = new Map<string, LocationHealth>();
 
-    devicesWithLocation.forEach(device => {
+    for (const device of devicesWithLocation) {
       const locationKey = device.location && device.location !== '' ? device.location : 'Unknown Location';
       
       if (location && locationKey.toLowerCase() !== location.toLowerCase()) {
-        return; // Skip if location filter doesn't match
+        continue; // Skip if location filter doesn't match
       }
 
       if (!locationMap.has(locationKey)) {
         // Pass geo data along with location name
-        const hierarchy = detectLocationHierarchy(locationKey, device.geo);
+        const hierarchy = await detectLocationHierarchy(locationKey, device.geo);
         locationMap.set(locationKey, {
           location: locationKey,
           hierarchy,
@@ -182,7 +181,7 @@ export async function GET(request: NextRequest) {
       if (!locationData.lastSeen || device.last_seen > locationData.lastSeen) {
         locationData.lastSeen = device.last_seen;
       }
-    });
+    }
 
     const locations = Array.from(locationMap.values());
 
@@ -190,14 +189,20 @@ export async function GET(request: NextRequest) {
     const hierarchicalMap = new Map<string, HierarchicalLocation>();
 
     locations.forEach(location => {
-      const { country, city, office } = location.hierarchy;
+      const { country, city, office } = location.hierarchy || {};
+      
+      // Skip if hierarchy data is missing
+      if (!country || !city || !office) {
+        console.warn('Missing hierarchy data for location:', location);
+        return;
+      }
       
       // Build country level
       if (!hierarchicalMap.has(country)) {
         hierarchicalMap.set(country, {
           level: 'country',
           name: country,
-          path: country === 'Unknown' ? '/locations' : `/${country.toLowerCase()}`,
+          path: country === 'Unknown' ? '/locations' : `/${country?.toLowerCase() || 'unknown'}`,
           deviceCount: 0,
           healthyDevices: 0,
           warningDevices: 0,
@@ -215,7 +220,7 @@ export async function GET(request: NextRequest) {
         hierarchicalMap.set(cityKey, {
           level: 'city',
           name: city,
-          path: city === 'Unknown' ? `/${country.toLowerCase()}` : `/${country.toLowerCase()}/${city.toLowerCase()}`,
+          path: city === 'Unknown' ? `/${country?.toLowerCase() || 'unknown'}` : `/${country?.toLowerCase() || 'unknown'}/${city?.toLowerCase() || 'unknown'}`,
           deviceCount: 0,
           healthyDevices: 0,
           warningDevices: 0,
@@ -235,7 +240,7 @@ export async function GET(request: NextRequest) {
         hierarchicalMap.set(officeKey, {
           level: 'office',
           name: office,
-          path: office === 'Main Office' ? `/${country.toLowerCase()}/${city.toLowerCase()}` : `/${country.toLowerCase()}/${city.toLowerCase()}/${office.toLowerCase()}`,
+          path: office === 'Main Office' ? `/${country?.toLowerCase() || 'unknown'}/${city?.toLowerCase() || 'unknown'}` : `/${country?.toLowerCase() || 'unknown'}/${city?.toLowerCase() || 'unknown'}/${office?.toLowerCase() || 'unknown'}`,
           deviceCount: 0,
           healthyDevices: 0,
           warningDevices: 0,

@@ -8,6 +8,12 @@ interface Host {
   interface_count?: number;
   status?: string;
   severity?: string;
+  location?: string;
+  geo?: {
+    lat: number;
+    lon: number;
+    source: string;
+  };
 }
 
 export async function GET(request: NextRequest) {
@@ -29,7 +35,9 @@ export async function GET(request: NextRequest) {
               ifindex: '$meta.ifindex',
               ifdescr: '$meta.ifdescr'
             }
-          }
+          },
+          location: { $first: '$meta.location' },
+          geo: { $first: '$meta.geo' }
         }
       },
       {
@@ -38,7 +46,9 @@ export async function GET(request: NextRequest) {
           hostid: '$_id.hostid',
           device_id: '$_id.device_id',
           last_seen: 1,
-          interface_count: { $size: '$interface_count' }
+          interface_count: { $size: '$interface_count' },
+          location: 1,
+          geo: 1
         }
       }
     ]).toArray();

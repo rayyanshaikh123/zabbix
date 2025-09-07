@@ -1,85 +1,35 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getCollection } from '@/lib/mongo';
+import { NextRequest, NextResponse } from 'next/server'
+import { connectToDatabase } from '@/lib/mongo'
 
-interface Metric {
-  _id: string;
-  ts: number;
-  meta: {
-    hostid: string;
-    device_id: string;
-    ifindex?: string;
-    ifdescr?: string;
-  };
-  metric: string;
-  value: number;
-  value_type: string;
-}
-
+// GET - Get raw metrics for a specific device
 export async function GET(
   request: NextRequest,
-  { params }: { params: { hostid: string } }
+  { params }: { params: Promise<{ hostid: string }> }
 ) {
   try {
-    const hostid = params.hostid;
-    const { searchParams } = new URL(request.url);
-
-    const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 1000); // Max 1000
-    const metric = searchParams.get('metric'); // Optional metric filter
-    const iface = searchParams.get('iface'); // Optional interface filter
-
-    const metricsCollection = await getCollection('metrics_ts');
-
-    // Build query
-    const query: any = {
-      'meta.hostid': hostid
-    };
-
-    if (metric) {
-      query.metric = { $regex: metric, $options: 'i' }; // Case-insensitive partial match
-    }
-
-    if (iface) {
-      query['meta.ifindex'] = iface;
-    }
-
-    // Get latest metrics
+    const { hostid } = await params
+    
+    const { db } = await connectToDatabase()
+    const metricsCollection = db.collection('metrics_ts')
+    
+    // Get all metrics for this device, sorted by timestamp (newest first)
     const metrics = await metricsCollection
-      .find(query)
+      .find({ 'meta.hostid': hostid })
       .sort({ ts: -1 })
-      .limit(limit)
-      .toArray();
-
-    // Convert MongoDB documents to plain objects and timestamps to numbers
-    const formattedMetrics: Metric[] = metrics.map(doc => ({
-      _id: doc._id.toString(),
-      ts: Math.floor(doc.ts.getTime() / 1000), // Convert Date to Unix timestamp
-      meta: {
-        hostid: doc.meta?.hostid || '',
-        device_id: doc.meta?.device_id || '',
-        ifindex: doc.meta?.ifindex,
-        ifdescr: doc.meta?.ifdescr
-      },
-      metric: doc.metric,
-      value: doc.value,
-      value_type: doc.value_type
-    }));
-
+      .limit(1000) // Limit to 1000 most recent metrics
+      .toArray()
+    
     return NextResponse.json({
-      count: formattedMetrics.length,
-      hostid: hostid,
-      filters: {
-        metric: metric,
-        iface: iface,
-        limit: limit
-      },
-      data: formattedMetrics
-    });
-
+      success: true,
+      metrics,
+      count: metrics.length
+    })
+    
   } catch (error) {
-    console.error('Error fetching metrics:', error);
+    console.error('Error fetching metrics:', error)
     return NextResponse.json(
-      { error: 'Failed to fetch metrics' },
+      { success: false, error: 'Failed to fetch metrics' },
       { status: 500 }
-    );
+    )
   }
 }

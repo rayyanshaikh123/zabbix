@@ -5,7 +5,9 @@ interface Host {
   hostid: string;
   device_id: string;
   last_seen?: Date;
+  location?: string;
   interface_count?: number;
+  total_metrics?: number;
   status?: string;
   severity?: string;
 }
@@ -31,11 +33,10 @@ export async function GET(request: NextRequest) {
             device_id: '$meta.device_id'
           },
           last_seen: { $max: '$ts' },
+          location: { $first: '$meta.location' },
+          total_metrics: { $sum: 1 },
           interface_count: {
-            $addToSet: {
-              ifindex: '$meta.ifindex',
-              ifdescr: '$meta.ifdescr'
-            }
+            $addToSet: '$meta.ifindex'
           }
         }
       },
@@ -45,7 +46,16 @@ export async function GET(request: NextRequest) {
           hostid: '$_id.hostid',
           device_id: '$_id.device_id',
           last_seen: 1,
-          interface_count: { $size: '$interface_count' }
+          location: 1,
+          total_metrics: 1,
+          interface_count: { 
+            $size: {
+              $filter: {
+                input: '$interface_count',
+                cond: { $ne: ['$$this', null] }
+              }
+            }
+          }
         }
       }
     ]).toArray();

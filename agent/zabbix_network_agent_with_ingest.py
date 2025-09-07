@@ -26,7 +26,15 @@ BACKEND_EVENTS_ENDPOINT = (BACKEND_URL.rstrip("/") + "/ingest/events") if BACKEN
 # Removed NOMINATIM_REVERSE_GEOCODE_URL and GEOIP_URL is for IP-based lookup which is a fallback
 GEOIP_URL = "http://ip-api.com/json/"
 
-NETWORK_ITEM_TERMS = ["ifIn", "ifOut", "ifDescr", "ifInOctets", "ifOutOctets", "ifHCInOctets", "ifHCOutOctets", "ifSpeed", "ifHighSpeed", "ifOperStatus", "Interface", "Network", "Traffic", "Port", "Link", "Bits received", "Bits sent", "Operational status", "Duplex status", "Speed", "Inbound packets", "Outbound packets"]
+# Environment variable to control whether to collect all items or just network items
+ALL_ITEMS = os.environ.get("ALL_ITEMS", "false").lower() == "true"
+
+# Simplified network and system item terms for better matching
+NETWORK_ITEM_TERMS = [
+    "if", "traffic", "interface", "net", "bandwidth", "in", "out", "octets", "errors", "discard",
+    "system", "os", "uptime", "memory", "cpu", "processor", "fan", "power", "temperature", "snmp",
+    "contact", "description", "location", "name", "object", "hardware", "software", "version"
+]
 
 # ------------- JSON-RPC helper -------------
 def api_call(method: str, params: dict = None, req_id: int = 1, timeout: int = 10) -> dict:
@@ -219,8 +227,8 @@ def main():
             
         if not hid:
             continue
-        # Check for various network interface patterns
-        network_patterns = ["ifIn", "ifOut", "Interface", "Network", "Traffic", "Bits received", "Bits sent", "Operational status"]
+        # Check for various network and system patterns
+        network_patterns = ["if", "traffic", "interface", "net", "bandwidth", "in", "out", "octets", "errors", "discard", "system", "os", "uptime", "memory", "cpu", "processor", "fan", "power", "temperature", "snmp"]
         found_network_items = False
 
         for pattern in network_patterns:
@@ -297,7 +305,9 @@ def main():
                     geo["source"] = "geoip_fallback"
             
             # The location_str will be determined by the frontend API using geocoding
-            location_str = geo["zabbix_location_str"] or geo.get("city", "Unknown Location")
+            raw_location = geo["zabbix_location_str"] or geo.get("city", "Unknown Location")
+            # Clean up location string by removing quotes and extra whitespace
+            location_str = raw_location.strip('"').strip("'").strip() if raw_location else "Unknown Location"
 
             mapping = ifdescr_maps.get(hostid, {})
 
@@ -314,25 +324,43 @@ def main():
                 key = it.get("key_") or ""
                 name = it.get("name") or ""
 
-                # Check if this is a network-related item
-                is_network_item = any(term.lower() in key.lower() or term.lower() in name.lower() for term in NETWORK_ITEM_TERMS)
+                # Check if this is a network-related item or if ALL_ITEMS is enabled
+                if ALL_ITEMS:
+                    is_network_item = True  # Collect all items when ALL_ITEMS is true
+                else:
+                    is_network_item = any(term.lower() in key.lower() or term.lower() in name.lower() for term in NETWORK_ITEM_TERMS)
 
                 if is_network_item:
                     network_items_found += 1
-                    idx = parse_ifindex_from_key(key) or "_global"
+                    # Try to extract interface from the item name or key
+                    idx = parse_ifindex_from_key(key)
+                    if not idx:
+                        # Look for interface patterns in the name
+                        if "Fa0/0" in name:
+                            idx = "Fa0/0"
+                        elif "Fa0/1" in name:
+                            idx = "Fa0/1"
+                        elif "GigabitEthernet" in name or "Gi" in name:
+                            idx = "GigabitEthernet"
+                        else:
+                            idx = "_global"
                     by_iface.setdefault(idx, []).append(it)
 
-            print(f"[{dev}] found {network_items_found} network-related items out of {len(items)} total items")
+            print(f"[{dev}] found {network_items_found} {'items' if ALL_ITEMS else 'network and system items'} out of {len(items)} total items")
 
             if network_items_found == 0:
-                print(f"[{dev}] no network items found. Sample item names:")
+                print(f"[{dev}] no {'items' if ALL_ITEMS else 'network/system items'} found. Sample item names:")
                 for i, item in enumerate(items[:5]):  # Show first 5 items
                     print(f"  {i+1}. Name: {item.get('name', 'N/A')}, Key: {item.get('key_', 'N/A')}")
                 continue
 
             for idx, its in by_iface.items():
-                iface_label = mapping.get(idx) if idx != "_global" else None
-                iface_label = iface_label or (f"ifIndex {idx}" if idx != "_global" else "_global")
+                if idx == "_global":
+                    iface_label = "System"
+                elif idx in ["Fa0/0", "Fa0/1", "GigabitEthernet"]:
+                    iface_label = idx
+                else:
+                    iface_label = mapping.get(idx) or f"Interface {idx}"
 
                 # find possible link speed
                 link_speed_bps = None
@@ -349,6 +377,7 @@ def main():
                         except Exception:
                             pass
 
+
                 for it in its:
                     itemid = str(it.get("itemid"))
                     key = it.get("key_") or ""
@@ -358,7 +387,7 @@ def main():
 
                     # compute rate for network traffic items
                     rate_bps = None
-                    is_traffic_item = any(term.lower() in name.lower() for term in ["bits received", "bits sent", "ifin", "ifout", "octets"])
+                    is_traffic_item = any(term.lower() in name.lower() or term.lower() in key.lower() for term in ["in", "out", "octets", "traffic", "bandwidth", "memory", "cpu", "processor"])
                     
                     if is_traffic_item:
                         hist = history_last_two(itemid, value_type=vt)
@@ -398,30 +427,43 @@ def main():
                     for j in its:
                         jkey = j.get("key_") or ""
                         jname = (j.get("name") or "").lower()
-                        if any(term in jname for term in ["operational status", "oper status", "operstatus"]) or "ifoperstatus" in jkey.lower():
+                        if any(term in jname or term in jkey.lower() for term in ["operational status", "oper status", "operstatus", "ifoperstatus"]) and "duplex" not in jname and "duplex" not in jkey.lower():
                             try:
                                 oper_up = oper_status_is_up(j.get("lastvalue"))
                                 break
                             except Exception:
                                 continue
 
-                    status = "OK"
-                    if oper_up is False:
-                        status = "Operational state != up — check link/config"
-                    else:
-                        if rate_bps is not None:
-                            if link_speed_bps:
-                                pct = (rate_bps / link_speed_bps) * 100.0
-                                if pct > 90.0:
-                                    status = f"High bandwidth ({pct:.1f}% of link)"
-                            else:
-                                if rate_bps > 100e6:
-                                    status = "High bandwidth (bps)"
+                    # Determine status based on metric type
+                    if any(term.lower() in name.lower() or term.lower() in key.lower() for term in ["operational status"]):
+                        # This is an operational status metric - check the actual value
+                        if oper_up is False:
+                            status = "Down"
                         else:
-                            if oper_up is False:
-                                status = "Operational state != up — check link/config"
-                            else:
-                                status = "No rate available (idle or insufficient history)"
+                            status = "Up"
+                    elif idx == "_global":
+                        # System metrics - always up if we can read them
+                        status = "Up"
+                    elif "ifIn" in key or "ifOut" in key:
+                        # Network traffic metrics - use operational status if available
+                        if oper_up is False:
+                            status = "Down"
+                        elif rate_bps is not None and rate_bps > 0:
+                            status = "Up"
+                        else:
+                            status = "Idle"
+                    elif any(term.lower() in name.lower() or term.lower() in key.lower() for term in ["bits received", "bits sent", "duplex", "speed", "packets", "errors", "discard", "interface type"]):
+                        # Interface-specific metrics - use operational status
+                        if oper_up is False:
+                            status = "Down"
+                        else:
+                            status = "Up"
+                    else:
+                        # other metrics - use operational status if available
+                        if oper_up is False:
+                            status = "Down"
+                        else:
+                            status = "Up"
 
                     # Build metric doc (time-series friendly)
                     try:
@@ -430,7 +472,7 @@ def main():
                         numeric_value = None
 
                     # Determine if this is a counter or gauge
-                    is_counter = any(term.lower() in name.lower() for term in ["bits received", "bits sent", "ifin", "ifout", "octets", "packets"])
+                    is_counter = any(term.lower() in name.lower() or term.lower() in key.lower() for term in ["in", "out", "octets", "traffic", "packets", "errors", "discard", "uptime", "memory", "cpu", "processor"])
                     
                     metric_doc = {
                         "ts": int(time.time()),

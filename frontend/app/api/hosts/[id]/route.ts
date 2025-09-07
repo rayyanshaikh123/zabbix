@@ -18,10 +18,10 @@ interface HostDetails {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const hostid = params.id;
+    const { id: hostid } = await params;
     const metricsCollection = await getCollection('metrics_ts');
 
     // Get host basic info

@@ -12,7 +12,7 @@ type NavItem = { label: string; href: string; adminOnly?: boolean }
 
 const navItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard" },
-  { label: "Locations", href: "/locations" },
+  { label: "Location", href: "/location" },
   { label: "Devices", href: "/devices" },
   { label: "Admin", href: "/admin", adminOnly: true },
 ]

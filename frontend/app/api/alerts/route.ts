@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
       value: doc.value,
       status: doc.status,
       severity: doc.severity,
-      detected_at: Math.floor(doc.detected_at.getTime() / 1000), // Convert Date to Unix timestamp
+      detected_at: typeof doc.detected_at === 'number' ? doc.detected_at : Math.floor(doc.detected_at.getTime() / 1000), // Handle both number and Date
       evidence: doc.evidence,
       labels: doc.labels
     }));

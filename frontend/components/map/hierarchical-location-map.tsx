@@ -3,7 +3,7 @@
 import "leaflet/dist/leaflet.css"
 import L from "leaflet"
 import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, useMap, useMapEvents } from "react-leaflet"
-import { useEffect, useMemo, useState, useCallback } from "react"
+import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { COUNTRY_COORDINATES, CITY_COORDINATES, OFFICE_COORDINATES_OFFSET } from "@/lib/location-utils"
 
@@ -73,12 +73,6 @@ export function HierarchicalLocationMap({
   const [viewLevel, setViewLevel] = useState<'world' | 'country' | 'city'>('world')
   const [selectedCountry, setSelectedCountry] = useState<LocationData | null>(null)
   const [selectedCity, setSelectedCity] = useState<LocationData | null>(null)
-  const [mapKey, setMapKey] = useState(0)
-
-  // Reset map when locations change
-  useEffect(() => {
-    setMapKey(prev => prev + 1)
-  }, [locations])
 
   // Get coordinates for a location
   const getLocationCoordinates = useCallback((location: LocationData): [number, number] | null => {
@@ -184,7 +178,6 @@ export function HierarchicalLocationMap({
       )}
 
       <MapContainer
-        key={mapKey}
         center={[20.5937, 78.9629]}
         zoom={3}
         className="h-[600px] w-full"

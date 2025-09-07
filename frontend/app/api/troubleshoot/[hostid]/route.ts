@@ -28,10 +28,10 @@ interface TroubleshootData {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { hostid: string } }
+  { params }: { params: Promise<{ hostid: string }> }
 ) {
   try {
-    const hostid = params.hostid;
+    const { hostid } = await params;
     const { searchParams } = new URL(request.url);
 
     const limit = Math.min(parseInt(searchParams.get('limit') || '100'), 500); // Max 500 for troubleshooting
