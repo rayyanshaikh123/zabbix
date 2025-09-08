@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { 
@@ -11,6 +12,7 @@ import {
   Activity
 } from 'lucide-react'
 import Link from 'next/link'
+import { HealthChartCustomizer, ChartTypeSelector, ChartType } from '@/components/health-chart-customizer'
 
 interface Device {
   hostid: string
@@ -37,6 +39,8 @@ export function OfficeHealthSummary({
   deviceCount, 
   className = '' 
 }: OfficeHealthSummaryProps) {
+  const [chartType, setChartType] = useState<ChartType>('circular')
+  const [showCustomizer, setShowCustomizer] = useState(false)
   // Calculate health statistics - fix the logic
   const healthyDevices = devices.filter(d => 
     (d.status === 'Up' || d.status === 'Operational') && 
@@ -114,14 +118,34 @@ export function OfficeHealthSummary({
     return 'bg-green-500'
   }
 
+  const handleCardClick = (e: React.MouseEvent) => {
+    // Don't prevent default if clicking on chart controls
+    const target = e.target as HTMLElement
+    if (target.closest('[data-chart-controls]')) {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+  }
+
   return (
-    <Card className={`hover:shadow-lg transition-all duration-200 w-full max-w-6xl ${className}`}>
+    <Card 
+      className={`hover:shadow-lg transition-all duration-200 w-full max-w-7xl ${className}`}
+      onClick={handleCardClick}
+    >
       <CardContent className="p-8">
         {/* Header */}
         <div className="mb-6">
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-1">
-            {officeName} Health By Device wise
-          </h3>
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-xl font-bold text-gray-900 dark:text-white">
+              {officeName} Health By Device wise
+            </h3>
+            <ChartTypeSelector
+              chartType={chartType}
+              onChartTypeChange={setChartType}
+              showCustomizer={showCustomizer}
+              onCustomizerToggle={setShowCustomizer}
+            />
+          </div>
           <p className="text-sm text-muted-foreground">
             {totalDevices} device{totalDevices !== 1 ? 's' : ''} total
           </p>
@@ -160,48 +184,18 @@ export function OfficeHealthSummary({
             </div>
           </div>
 
-          {/* Overall Health Donut Chart */}
+          {/* Overall Health Customizable Chart */}
           <div className="flex flex-col items-center">
             <h4 className="font-semibold text-gray-900 dark:text-white mb-6">Overall Health</h4>
-            <div className="relative w-48 h-48 mb-6">
-              <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                {/* Background circle */}
-                <circle
-                  cx="50"
-                  cy="50"
-                  r="40"
-                  fill="none"
-                  stroke="rgba(0, 0, 0, 0.1)"
-                  strokeWidth="6"
-                />
-                
-                {/* Progress circle */}
-                <circle
-                  cx="50"
-                  cy="50"
-                  r="40"
-                  fill="none"
-                  stroke={healthStatus === 'excellent' ? '#10B981' : 
-                         healthStatus === 'good' ? '#3B82F6' : 
-                         healthStatus === 'warning' ? '#F59E0B' : '#EF4444'}
-                  strokeWidth="6"
-                  strokeLinecap="round"
-                  strokeDasharray={`${2 * Math.PI * 40}`}
-                  strokeDashoffset={`${2 * Math.PI * 40 * (1 - healthyPercentage / 100)}`}
-                  style={{
-                    transition: 'stroke-dashoffset 0.5s ease-in-out'
-                  }}
-                />
-              </svg>
-              
-              {/* Center text */}
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <div className={`text-4xl font-bold ${statusColor}`}>
-                  {healthyPercentage}%
-                </div>
-                <div className="text-lg text-muted-foreground font-medium">Healthy</div>
-              </div>
-            </div>
+            <HealthChartCustomizer
+              healthScore={healthyPercentage}
+              status={healthStatus}
+              size="xl"
+              showDetails={true}
+              className="mb-6"
+              chartType={chartType}
+              onChartTypeChange={setChartType}
+            />
           </div>
 
           {/* Device List */}

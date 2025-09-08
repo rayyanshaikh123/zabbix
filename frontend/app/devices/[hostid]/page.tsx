@@ -1,7 +1,7 @@
 import { BackButton } from '@/components/back-button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { AlertTriangle, CheckCircle, Wifi, Server, Monitor, Activity, Settings, Network, HardDrive, Cpu, MemoryStick, Clock, MapPin, Thermometer, Zap, Fan, Database, Info } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Wifi, Server, Monitor, Activity, Settings, Network, HardDrive, Cpu, MemoryStick, Clock, MapPin, Thermometer, Zap, Fan, Database, Info, Bot } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { LogPanel } from '@/components/log-panel';
@@ -9,6 +9,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LocationDisplay } from '@/components/location-display';
 import { DeviceHealthMonitor } from '@/components/device-health-monitor';
 import { CircularHealthChart } from '@/components/circular-health-chart';
+import { AITroubleshootModal } from '@/components/ai-troubleshoot-modal';
+import { Button } from '@/components/ui/button';
 
 interface DeviceInfo {
   hostid: string;
@@ -291,10 +293,28 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
             {/* Hardware Status */}
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Settings className="h-5 w-5" />
-                  Hardware Status
-                </CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <Settings className="h-5 w-5" />
+                    Hardware Status
+                  </CardTitle>
+                  {(system_metrics?.hardware?.fan_status !== 'Normal' || 
+                    system_metrics?.hardware?.power_status !== 'Normal' ||
+                    (system_metrics?.hardware?.temperature && system_metrics.hardware.temperature > 70)) && (
+                    <AITroubleshootModal
+                      device={device_name}
+                      metric="system.hardware.status"
+                      value="Hardware issues detected"
+                      suggestion="Hardware components showing abnormal status - check physical components"
+                      severity="warn"
+                    >
+                      <Button variant="outline" size="sm" className="h-7 px-2 text-xs">
+                        <Bot className="h-3 w-3 mr-1" />
+                        AI Fix
+                      </Button>
+                    </AITroubleshootModal>
+                  )}
+                </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-2">
@@ -333,13 +353,29 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
             {/* Device Health Overview */}
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Activity className="h-5 w-5 text-blue-600" />
-                  Device Health Overview
-                </CardTitle>
-                <CardDescription>
-                  Comprehensive health monitoring for {device_name}
-                </CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Activity className="h-5 w-5 text-blue-600" />
+                      Device Health Overview
+                    </CardTitle>
+                    <CardDescription>
+                      Comprehensive health monitoring for {device_name}
+                    </CardDescription>
+                  </div>
+                  <AITroubleshootModal
+                    device={device_name}
+                    metric="device.health.overall"
+                    value="85%"
+                    suggestion="Monitor overall device health and performance metrics"
+                    severity="info"
+                  >
+                    <Button variant="outline" size="sm" className="flex items-center gap-2">
+                      <Bot className="h-4 w-4" />
+                      AI Health Analysis
+                    </Button>
+                  </AITroubleshootModal>
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="flex items-center justify-center">
@@ -364,8 +400,24 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
         <TabsContent value="interfaces" className="mt-6">
           <Card>
             <CardHeader>
-              <CardTitle>Network Interfaces</CardTitle>
-              <CardDescription>Detailed status and traffic information for each interface.</CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Network Interfaces</CardTitle>
+                  <CardDescription>Detailed status and traffic information for each interface.</CardDescription>
+                </div>
+                <AITroubleshootModal
+                  device={device_name}
+                  metric="network.interfaces.status"
+                  value={`${upInterfaces} up, ${downInterfaces} down`}
+                  suggestion="Check interface status and connectivity issues"
+                  severity={downInterfaces > 0 ? "warn" : "info"}
+                >
+                  <Button variant="outline" size="sm" className="flex items-center gap-2">
+                    <Bot className="h-4 w-4" />
+                    AI Interface Analysis
+                  </Button>
+                </AITroubleshootModal>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
@@ -380,8 +432,24 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
                             {iface.status}
                           </Badge>
                         </div>
-                        <div className="text-sm text-muted-foreground">
-                          Last seen: {new Date(iface.last_seen).toLocaleString()}
+                        <div className="flex items-center gap-2">
+                          <div className="text-sm text-muted-foreground">
+                            Last seen: {new Date(iface.last_seen).toLocaleString()}
+                          </div>
+                          {(iface.status === 'Down' || iface.traffic.errors_in > 0 || iface.traffic.errors_out > 0) && (
+                            <AITroubleshootModal
+                              device={device_name}
+                              metric={`interface.${iface.name}.status`}
+                              value={iface.status}
+                              suggestion={`Interface ${iface.name} has issues - check connectivity and configuration`}
+                              severity={iface.status === 'Down' ? "error" : "warn"}
+                            >
+                              <Button variant="outline" size="sm" className="h-7 px-2 text-xs">
+                                <Bot className="h-3 w-3 mr-1" />
+                                AI Fix
+                              </Button>
+                            </AITroubleshootModal>
+                          )}
                         </div>
                       </div>
                       
@@ -443,10 +511,26 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
             {/* Memory Information */}
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <MemoryStick className="h-5 w-5" />
-                  Memory Information
-                </CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <MemoryStick className="h-5 w-5" />
+                    Memory Information
+                  </CardTitle>
+                  {system_metrics?.memory?.utilization && system_metrics.memory.utilization > 80 && (
+                    <AITroubleshootModal
+                      device={device_name}
+                      metric="system.memory.utilization"
+                      value={`${system_metrics.memory.utilization.toFixed(1)}%`}
+                      suggestion="High memory usage detected - investigate memory leaks or insufficient RAM"
+                      severity="warn"
+                    >
+                      <Button variant="outline" size="sm" className="h-7 px-2 text-xs">
+                        <Bot className="h-3 w-3 mr-1" />
+                        AI Fix
+                      </Button>
+                    </AITroubleshootModal>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
@@ -502,13 +586,29 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
         <TabsContent value="metrics" className="mt-6">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Database className="h-5 w-5" />
-                Raw Metrics Data
-              </CardTitle>
-              <CardDescription>
-                All metrics collected from the device ({rawMetrics.length} total metrics)
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Database className="h-5 w-5" />
+                    Raw Metrics Data
+                  </CardTitle>
+                  <CardDescription>
+                    All metrics collected from the device ({rawMetrics.length} total metrics)
+                  </CardDescription>
+                </div>
+                <AITroubleshootModal
+                  device={device_name}
+                  metric="raw.metrics.analysis"
+                  value={`${rawMetrics.length} metrics`}
+                  suggestion="Analyze raw metrics data for anomalies and performance issues"
+                  severity="info"
+                >
+                  <Button variant="outline" size="sm" className="flex items-center gap-2">
+                    <Bot className="h-4 w-4" />
+                    AI Metrics Analysis
+                  </Button>
+                </AITroubleshootModal>
+              </div>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[600px]">
@@ -518,9 +618,29 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
                       <div key={index} className="border p-4 rounded-lg">
                         <div className="flex items-center justify-between mb-2">
                           <h4 className="font-medium text-sm">{metric.metric}</h4>
-                          <Badge variant="outline" className="text-xs">
-                            {metric.value_type || 'gauge'}
-                          </Badge>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="text-xs">
+                              {metric.value_type || 'gauge'}
+                            </Badge>
+                            {/* Show AI troubleshoot button for metrics that might indicate issues */}
+                            {(metric.metric.includes('error') || 
+                              metric.metric.includes('discard') || 
+                              metric.metric.includes('utilization') ||
+                              metric.metric.includes('status')) && (
+                              <AITroubleshootModal
+                                device={device_name}
+                                metric={metric.metric}
+                                value={metric.value}
+                                suggestion={`Analyze ${metric.metric} metric for potential issues`}
+                                severity="info"
+                              >
+                                <Button variant="outline" size="sm" className="h-6 px-2 text-xs">
+                                  <Bot className="h-3 w-3 mr-1" />
+                                  AI
+                                </Button>
+                              </AITroubleshootModal>
+                            )}
+                          </div>
                         </div>
                         <div className="grid grid-cols-2 gap-4 text-sm">
                           <div>

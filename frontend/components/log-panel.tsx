@@ -4,6 +4,8 @@ import useSWR from "swr"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { AITroubleshootModal } from "@/components/ai-troubleshoot-modal"
+import { Bot, Lightbulb } from "lucide-react"
 
 type Log = {
   id: string
@@ -153,8 +155,9 @@ export function LogPanel({ deviceFilter }: { deviceFilter?: string }) {
                       </div>
                       <div className="text-sm font-medium">{l.message}</div>
                       {l.suggestion && (
-                        <div className="mt-1 text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded">
-                          💡 {l.suggestion}
+                        <div className="mt-1 text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded flex items-center gap-2">
+                          <Lightbulb className="h-3 w-3" />
+                          {l.suggestion}
                         </div>
                       )}
                       {l.metric && (
@@ -164,7 +167,27 @@ export function LogPanel({ deviceFilter }: { deviceFilter?: string }) {
                         </div>
                       )}
                     </div>
-                    <div className="ml-2 flex-shrink-0">
+                    <div className="ml-2 flex-shrink-0 flex items-center gap-2">
+                      {/* AI Troubleshoot Button for warnings and errors */}
+                      {(l.level === "warn" || l.level === "error") && l.device && l.metric && (
+                        <AITroubleshootModal
+                          device={l.device}
+                          metric={l.metric}
+                          value={l.value}
+                          suggestion={l.suggestion || ""}
+                          severity={l.level}
+                        >
+                          <Button 
+                            size="sm" 
+                            variant="outline" 
+                            className="h-7 px-2 text-xs"
+                            title="Get AI-powered troubleshooting solution"
+                          >
+                            <Bot className="h-3 w-3 mr-1" />
+                            AI Fix
+                          </Button>
+                        </AITroubleshootModal>
+                      )}
                       <Badge variant={l.level === "error" ? "destructive" : l.level === "warn" ? "secondary" : "outline"}>
                         {l.level.toUpperCase()}
                       </Badge>

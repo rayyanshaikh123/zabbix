@@ -21,6 +21,7 @@ interface Device {
   interfaces: string[]
   total_metrics: number
   location: string
+  device_status: 'occupied' | 'available' // New field for device availability
 }
 
 interface OfficeCreationFormProps {
@@ -81,7 +82,8 @@ export function OfficeCreationForm({ location, city, country, isOpen, onClose, o
           severity: host.severity || 'info',
           interfaces: [],
           total_metrics: host.interface_count || 0,
-          location: host.location || 'Unknown'
+          location: host.location || 'Unknown',
+          device_status: host.device_status || 'available' // Default to available
         }))
 
         // Filter devices by location if requested and geocoded location is available
@@ -99,6 +101,9 @@ export function OfficeCreationForm({ location, city, country, isOpen, onClose, o
                    (targetCountry === 'india' && deviceLocation.includes('maharashtra'))
           })
         }
+
+        // Always filter out assigned devices - only show available devices
+        devices = devices.filter((device: any) => device.device_status === 'available')
         
         setDevices(devices)
       } else {
@@ -152,6 +157,7 @@ export function OfficeCreationForm({ location, city, country, isOpen, onClose, o
       setSelectedDevices(devices.map(d => d.device_id))
     }
   }
+
 
   // Get address suggestions as user types
   const handleAddressInput = async (value: string) => {
@@ -411,6 +417,7 @@ export function OfficeCreationForm({ location, city, country, isOpen, onClose, o
             capacity: formData.capacity,
             notes: formData.notes
           },
+          device_ids: selectedDevices, // Send selected device IDs
           status: formData.status
         })
       })
@@ -418,31 +425,7 @@ export function OfficeCreationForm({ location, city, country, isOpen, onClose, o
       const officeData = await officeResponse.json()
       
       if (officeData.success) {
-        // Update selected devices to belong to this office
-        const updatePromises = selectedDevices.map(deviceId => {
-          const device = devices.find(d => d.device_id === deviceId)
-          if (device) {
-            return fetch(`/api/devices/${device.hostid}`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                device_id: deviceId,
-                location: formData.office_name,
-                geo: {
-                  lat: geocodedCoords.lat,
-                  lon: geocodedCoords.lon,
-                  source: 'office_assignment'
-                }
-              })
-            })
-          }
-          return Promise.resolve()
-        })
-
-        await Promise.all(updatePromises)
-        
-        // Device count will be automatically calculated by the GET endpoint
-        
+        // Device assignment is now handled by the API
         alert('Office created successfully!')
         onSuccess()
         onClose()
@@ -472,6 +455,13 @@ export function OfficeCreationForm({ location, city, country, isOpen, onClose, o
       return <Badge variant="secondary" className="flex items-center gap-1"><Clock className="h-3 w-3" />Warning</Badge>
     }
     return <Badge variant="default" className="flex items-center gap-1"><CheckCircle className="h-3 w-3" />Healthy</Badge>
+  }
+
+  const getDeviceStatusBadge = (deviceStatus: string) => {
+    if (deviceStatus === 'occupied') {
+      return <Badge variant="secondary" className="flex items-center gap-1 bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"><Users className="h-3 w-3" />Assigned to Office</Badge>
+    }
+    return <Badge variant="outline" className="flex items-center gap-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"><CheckCircle className="h-3 w-3" />Available</Badge>
   }
 
   return (
@@ -678,28 +668,28 @@ export function OfficeCreationForm({ location, city, country, isOpen, onClose, o
                 <div>
                   <CardTitle className="text-lg">Select Devices</CardTitle>
                   <CardDescription>
-                    Choose which devices belong to this office
+                    Choose which available devices belong to this office. Only unassigned devices are shown here.
                     {geocodedLocation.country && geocodedLocation.city && (
                       <span className="block text-sm text-blue-600 mt-1">
-                        📍 Showing devices from {geocodedLocation.city}, {geocodedLocation.country}
+                        📍 Showing available devices from {geocodedLocation.city}, {geocodedLocation.country}
                       </span>
                     )}
                     {!geocodedLocation.country && (
                       <span className="block text-sm text-gray-500 mt-1">
-                        💡 Enter an address above to filter devices by location
+                        💡 Enter an address above to filter available devices by location
                       </span>
                     )}
                   </CardDescription>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
                   {geocodedLocation.country && (
                     <Button 
                       variant="outline" 
                       size="sm" 
                       onClick={() => fetchDevices(false)}
-                      title="Show all devices regardless of location"
+                      title="Show all available devices regardless of location"
                     >
-                      Show All Devices
+                      Show All Available Devices
                     </Button>
                   )}
                   <Button variant="outline" size="sm" onClick={handleSelectAll}>
@@ -725,9 +715,9 @@ export function OfficeCreationForm({ location, city, country, isOpen, onClose, o
               ) : devices.length === 0 ? (
                 <div className="text-center py-8">
                   <Server className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">No Devices Found</h3>
+                  <h3 className="text-lg font-semibold mb-2">No Available Devices Found</h3>
                   <p className="text-muted-foreground">
-                    No network devices are available in the monitoring system to assign to this office.
+                    No unassigned network devices are available to assign to this office. All devices may already be assigned to other offices.
                   </p>
                 </div>
               ) : (
@@ -739,21 +729,24 @@ export function OfficeCreationForm({ location, city, country, isOpen, onClose, o
                         checked={selectedDevices.includes(device.device_id)}
                         onCheckedChange={() => handleDeviceToggle(device.device_id)}
                       />
-                      <div className="flex-1 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          {getDeviceIcon(device.device_type || 'other')}
-                          <div>
-                            <div className="font-medium">{device.device_id}</div>
-                            <div className="text-sm text-muted-foreground">
-                              {device.device_type || 'Unknown'} • {device.interfaces.length} interfaces • {device.total_metrics} metrics
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              📍 {device.location} • Last seen: {new Date(device.last_seen).toLocaleString()}
+                        <div className="flex-1 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            {getDeviceIcon(device.device_type || 'other')}
+                            <div>
+                              <div className="font-medium">{device.device_id}</div>
+                              <div className="text-sm text-muted-foreground">
+                                {device.device_type || 'Unknown'} • {device.interfaces.length} interfaces • {device.total_metrics} metrics
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                📍 {device.location} • Last seen: {new Date(device.last_seen).toLocaleString()}
+                              </div>
                             </div>
                           </div>
+                          <div className="flex flex-col gap-2 items-end">
+                            {getStatusBadge(device.status, device.severity)}
+                            {getDeviceStatusBadge(device.device_status)}
+                          </div>
                         </div>
-                        {getStatusBadge(device.status, device.severity)}
-                      </div>
                     </div>
                   ))}
                 </div>

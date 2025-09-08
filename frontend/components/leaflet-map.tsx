@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Building, Users, Activity, ArrowRight, CheckCircle, AlertTriangle, MapPin } from 'lucide-react'
 import Link from 'next/link'
+import { SimpleMapFallback } from '@/components/simple-map-fallback'
 import 'leaflet/dist/leaflet.css'
 
 interface Office {
@@ -26,6 +27,8 @@ interface Office {
     phone: string
     address: string
   }
+  health_score?: number
+  health_status?: 'excellent' | 'good' | 'warning' | 'critical'
 }
 
 interface LeafletMapProps {
@@ -53,11 +56,15 @@ export function LeafletMap({ offices, className = '' }: LeafletMapProps) {
       return
     }
 
+    // Prevent multiple initializations
+    if (mapInstanceRef.current) {
+      return
+    }
+
     const initializeMap = async () => {
       try {
-        // Dynamic import of Leaflet
+        // Dynamic import of Leaflet only
         const L = await import('leaflet')
-        const { MapContainer, TileLayer, Marker, Popup } = await import('react-leaflet')
         
         // Fix Leaflet icons
         if (typeof window !== 'undefined') {
@@ -69,8 +76,13 @@ export function LeafletMap({ offices, className = '' }: LeafletMapProps) {
           })
         }
 
-        // Create map instance
-        const map = L.map(mapContainerRef.current!, {
+        // Ensure container is ready
+        if (!mapContainerRef.current) {
+          throw new Error('Map container not ready')
+        }
+
+        // Create map instance with error handling
+        const map = L.map(mapContainerRef.current, {
           center: [offices[0]?.geo.lat || 20.5937, offices[0]?.geo.lon || 78.9629],
           zoom: 6,
           zoomControl: true,
@@ -82,32 +94,79 @@ export function LeafletMap({ offices, className = '' }: LeafletMapProps) {
           touchZoom: true
         })
 
+        // Verify map was created successfully
+        if (!map || !map.getContainer) {
+          throw new Error('Failed to create map instance')
+        }
+
         // Add tile layer
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map)
 
         // Add markers
-        offices.forEach(office => {
-          const marker = L.marker([office.geo.lat, office.geo.lon], {
-            icon: createCustomIcon(L, getMarkerColor(office))
-          }).addTo(map)
+        if (offices && offices.length > 0) {
+          offices.forEach(office => {
+            if (office.geo && office.geo.lat && office.geo.lon) {
+              const marker = L.marker([office.geo.lat, office.geo.lon], {
+                icon: createCustomIcon(L, getMarkerColor(office))
+              }).addTo(map)
 
+          // Get health color and status
+          const getHealthColor = (status: string) => {
+            switch (status) {
+              case 'excellent': return '#10B981'
+              case 'good': return '#3B82F6'
+              case 'warning': return '#F59E0B'
+              case 'critical': return '#EF4444'
+              default: return '#6B7280'
+            }
+          }
+          
+          const getHealthIcon = (status: string) => {
+            switch (status) {
+              case 'excellent': return '✅'
+              case 'good': return '🟢'
+              case 'warning': return '⚠️'
+              case 'critical': return '❌'
+              default: return '❓'
+            }
+          }
+          
+          const healthScore = office.health_score || 0
+          const healthStatus = office.health_status || 'critical'
+          const healthColor = getHealthColor(healthStatus)
+          const healthIcon = getHealthIcon(healthStatus)
+          
           marker.bindPopup(`
-            <div style="min-width: 250px; padding: 8px;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <div style="min-width: 280px; padding: 12px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                 <h3 style="font-weight: 600; font-size: 18px; margin: 0;">${office.office}</h3>
                 <span style="padding: 4px 8px; border-radius: 4px; font-size: 12px; ${office.status === 'active' ? 'background-color: #10B981; color: white;' : 'background-color: #EF4444; color: white;'}">${office.status}</span>
               </div>
-              <div style="margin-bottom: 8px;">
-                <div style="margin-bottom: 4px;"><strong>Location:</strong> ${office.city}, ${office.country}</div>
-                <div style="margin-bottom: 4px;"><strong>Devices:</strong> ${office.device_count}</div>
-                <div style="margin-bottom: 4px;"><strong>Contact:</strong> ${office.contact_info.person}</div>
+              
+              <!-- Health Status Section -->
+              <div style="background-color: #F9FAFB; padding: 8px; border-radius: 6px; margin-bottom: 12px; border-left: 4px solid ${healthColor};">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                  <span style="font-size: 16px;">${healthIcon}</span>
+                  <span style="font-weight: 600; color: ${healthColor};">Health: ${healthScore}%</span>
+                </div>
+                <div style="font-size: 12px; color: #6B7280; text-transform: capitalize;">${healthStatus} Status</div>
               </div>
-              <a href="/location/cities/offices/${office._id}" style="display: inline-block; padding: 8px 16px; background-color: #3B82F6; color: white; text-decoration: none; border-radius: 4px; font-size: 14px; width: 100%; text-align: center;">View Details</a>
+              
+              <!-- Office Details -->
+              <div style="margin-bottom: 12px;">
+                <div style="margin-bottom: 6px; font-size: 14px;"><strong>📍 Location:</strong> ${office.city}, ${office.country}</div>
+                <div style="margin-bottom: 6px; font-size: 14px;"><strong>🖥️ Devices:</strong> ${office.device_count}</div>
+                <div style="margin-bottom: 6px; font-size: 14px;"><strong>👤 Contact:</strong> ${office.contact_info.person}</div>
+              </div>
+              
+              <a href="/location/cities/offices/${office._id}" style="display: inline-block; padding: 10px 16px; background-color: #3B82F6; color: white; text-decoration: none; border-radius: 6px; font-size: 14px; width: 100%; text-align: center; font-weight: 500;">View Details</a>
             </div>
           `)
-        })
+            }
+          })
+        }
 
         // Fit bounds to show all markers
         if (offices.length > 0) {
@@ -117,25 +176,43 @@ export function LeafletMap({ offices, className = '' }: LeafletMapProps) {
           map.fitBounds(group.getBounds().pad(0.1))
         }
 
-        // Invalidate map size to ensure proper rendering
+        // Store map reference first
+        mapInstanceRef.current = map
+        
+        // Invalidate map size to ensure proper rendering with delay
         setTimeout(() => {
-          map.invalidateSize()
-        }, 100)
+          if (mapInstanceRef.current && typeof mapInstanceRef.current.invalidateSize === 'function') {
+            try {
+              mapInstanceRef.current.invalidateSize()
+            } catch (error) {
+              console.warn('Error invalidating map size on init:', error)
+            }
+          }
+        }, 200)
 
         // Add resize observer to handle container size changes
         const resizeObserver = new ResizeObserver(() => {
-          if (map) {
-            map.invalidateSize()
-          }
+          // Add a small delay to prevent rapid calls
+          setTimeout(() => {
+            if (mapInstanceRef.current && typeof mapInstanceRef.current.invalidateSize === 'function') {
+              try {
+                mapInstanceRef.current.invalidateSize()
+              } catch (error) {
+                console.warn('Error invalidating map size on resize:', error)
+              }
+            }
+          }, 50)
         })
         
         if (mapContainerRef.current) {
           resizeObserver.observe(mapContainerRef.current)
         }
 
-        mapInstanceRef.current = map
         setIsMapReady(true)
         isInitializedRef.current = true
+        
+        // Store resize observer for cleanup
+        ;(mapInstanceRef.current as any).resizeObserver = resizeObserver
 
       } catch (error) {
         console.error('Map initialization error:', error)
@@ -149,7 +226,14 @@ export function LeafletMap({ offices, className = '' }: LeafletMapProps) {
     return () => {
       if (mapInstanceRef.current) {
         try {
-          mapInstanceRef.current.remove()
+          // Clean up resize observer if it exists
+          if ((mapInstanceRef.current as any).resizeObserver) {
+            (mapInstanceRef.current as any).resizeObserver.disconnect()
+          }
+          // Remove the map
+          if (typeof mapInstanceRef.current.remove === 'function') {
+            mapInstanceRef.current.remove()
+          }
         } catch (error) {
           console.warn('Error cleaning up map:', error)
         }
@@ -161,6 +245,18 @@ export function LeafletMap({ offices, className = '' }: LeafletMapProps) {
   }, [isClient, offices])
 
   const getMarkerColor = (office: Office) => {
+    // If we have health data, use health status for color
+    if (office.health_status && office.health_score !== undefined) {
+      switch (office.health_status) {
+        case 'excellent': return '#10B981' // Green
+        case 'good': return '#3B82F6' // Blue
+        case 'warning': return '#F59E0B' // Orange
+        case 'critical': return '#EF4444' // Red
+        default: return '#6B7280' // Gray
+      }
+    }
+    
+    // Fallback to original logic if no health data
     if (office.status === 'active' && office.device_count > 0) {
       return '#10B981' // Green for active with devices
     } else if (office.status === 'active') {
@@ -227,32 +323,7 @@ export function LeafletMap({ offices, className = '' }: LeafletMapProps) {
   }
 
   if (mapError) {
-    return (
-      <Card className={className}>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <MapPin className="h-5 w-5 text-blue-600" />
-            Office Locations Map
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-96 w-full flex items-center justify-center bg-gray-100 dark:bg-gray-800 rounded-lg">
-            <div className="text-center">
-              <AlertTriangle className="h-16 w-16 text-red-500 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">Map Loading Error</h3>
-              <p className="text-muted-foreground mb-4">Unable to load the interactive map.</p>
-              <Button onClick={() => {
-                setMapError(false)
-                isInitializedRef.current = false
-                mapKeyRef.current += 1
-              }} variant="outline">
-                Try Again
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    )
+    return <SimpleMapFallback offices={offices} className={className} />
   }
 
   if (offices.length === 0) {
@@ -287,15 +358,19 @@ export function LeafletMap({ offices, className = '' }: LeafletMapProps) {
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-green-500"></div>
-            <span>Active with devices</span>
+            <span>Excellent Health</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-            <span>Active without devices</span>
+            <span>Good Health</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-orange-500"></div>
+            <span>Warning</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-red-500"></div>
-            <span>Inactive</span>
+            <span>Critical</span>
           </div>
         </div>
       </CardHeader>

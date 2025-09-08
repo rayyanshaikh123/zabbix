@@ -50,7 +50,8 @@ import {
   TrendingDown,
   Minus,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Bot
 } from "lucide-react"
 import { toast } from "sonner"
 import { LocationDisplay } from "@/components/location-display"
@@ -58,6 +59,7 @@ import { DeviceHealthMonitor } from "@/components/device-health-monitor"
 import { OfficeHealthOverview } from "@/components/office-health-overview"
 import { CircularHealthChart } from "@/components/circular-health-chart"
 import { HealthDashboard } from "@/components/health-dashboard"
+import { AITroubleshootModal } from "@/components/ai-troubleshoot-modal"
 
 interface Office {
   _id: string
@@ -126,6 +128,21 @@ export default function OfficeDetailsPage() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [officeHealthScore, setOfficeHealthScore] = useState(0)
   const [officeHealthStatus, setOfficeHealthStatus] = useState<'excellent' | 'good' | 'warning' | 'critical'>('critical')
+  const [zabbixServer, setZabbixServer] = useState<any>(null)
+
+  // Fetch Zabbix server information
+  const fetchZabbixServer = async () => {
+    try {
+      const response = await fetch('/api/zabbix-server')
+      const data = await response.json()
+      
+      if (data.success && data.server) {
+        setZabbixServer(data.server)
+      }
+    } catch (error) {
+      console.error('Error fetching Zabbix server info:', error)
+    }
+  }
 
   // Fetch office details
   const fetchOfficeDetails = async () => {
@@ -228,6 +245,7 @@ export default function OfficeDetailsPage() {
   useEffect(() => {
     if (officeId) {
       fetchOfficeDetails()
+      fetchZabbixServer()
     }
   }, [officeId])
 
@@ -411,23 +429,118 @@ export default function OfficeDetailsPage() {
     // Get total interfaces from all devices
     const totalInterfaces = devices.reduce((sum, device) => sum + (device.interface_count || 0), 0)
     
+    // Function to get interface status and color
+    const getInterfaceStatus = (interfaceName: string) => {
+      // Check if we have devices connected
+      if (devices.length === 0) {
+        return { status: 'unknown', color: 'gray' }
+      }
+      
+      // For Fa0/0 - connected to Zabbix server (should be up)
+      if (interfaceName === 'Fa0/0') {
+        return { status: 'up', color: 'green' }
+      }
+      
+      // For Fa0/1 - check if it has connected devices or is idle
+      if (interfaceName === 'Fa0/1') {
+        // Check if there are devices that would be connected to Fa0/1
+        // This could be switches, PCs, or other network devices
+        const hasConnectedDevices = devices.some(device => 
+          device.interface_count && device.interface_count > 1 // More than just Fa0/0
+        )
+        
+        if (hasConnectedDevices) {
+          return { status: 'up', color: 'green' }
+        } else {
+          return { status: 'idle', color: 'blue' }
+        }
+      }
+      
+      // For other interfaces, check if they have connected devices
+      const hasConnectedDevices = devices.some(device => 
+        device.interface_count && device.interface_count > 0
+      )
+      
+      if (hasConnectedDevices) {
+        return { status: 'up', color: 'green' }
+      } else {
+        return { status: 'idle', color: 'blue' }
+      }
+    }
+    
+    // Get interface colors based on status
+    const getInterfaceColor = (status: string) => {
+      switch (status) {
+        case 'up':
+          return 'from-green-400 to-green-600'
+        case 'down':
+          return 'from-red-400 to-red-600'
+        case 'idle':
+          return 'from-blue-400 to-blue-600'
+        case 'unknown':
+        default:
+          return 'from-gray-400 to-gray-600'
+      }
+    }
+    
     return (
       <div className="space-y-8">
-        {/* Internet Gateway */}
+        {/* Zabbix Server */}
         <div className="flex justify-center">
           <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-3 rounded-lg flex items-center gap-2 shadow-lg">
-            <Globe className="h-6 w-6" />
-            <span className="font-medium text-lg">Internet Gateway</span>
+            <Server className="h-6 w-6" />
+            <div className="text-center">
+              <div className="font-medium text-lg">Zabbix Server</div>
+              <div className="text-sm opacity-90">
+                {zabbixServer ? zabbixServer.hostname || zabbixServer.name : 'Monitoring Server'}
+              </div>
+            </div>
           </div>
         </div>
+
+        {/* Server Information */}
+        {zabbixServer && (
+          <div className="flex justify-center">
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 max-w-md">
+              <div className="text-sm space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Hostname:</span>
+                  <span className="font-mono">{zabbixServer.hostname}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Name:</span>
+                  <span className="font-mono">{zabbixServer.name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Host ID:</span>
+                  <span className="font-mono">{zabbixServer.hostid}</span>
+                </div>
+                {zabbixServer.interfaces && zabbixServer.interfaces.length > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">IP Address:</span>
+                    <span className="font-mono">{zabbixServer.interfaces[0].ip || 'N/A'}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Connection Cable */}
         <div className="flex justify-center">
           <div className="relative">
-            <div className="w-2 h-12 bg-gradient-to-b from-blue-500 to-green-500 rounded-full shadow-md"></div>
-            <div className="absolute -right-8 top-1/2 transform -translate-y-1/2 text-xs text-muted-foreground font-mono">
-              WAN
-            </div>
+            {(() => {
+              const interfaceStatus = getInterfaceStatus('Fa0/0')
+              const colorClass = getInterfaceColor(interfaceStatus.status)
+              return (
+                <>
+                  <div className={`w-2 h-12 bg-gradient-to-b ${colorClass} rounded-full shadow-md`}></div>
+                  <div className="absolute -right-8 top-1/2 transform -translate-y-1/2 text-xs text-muted-foreground font-mono">
+                    Fa0/0
+                  </div>
+                </>
+              )
+            })()}
           </div>
         </div>
 
@@ -442,15 +555,23 @@ export default function OfficeDetailsPage() {
             <Badge variant="secondary" className="ml-2 bg-white/20 text-white">{deviceStats.routers}</Badge>
           </div>
           
-          {/* Router Interfaces */}
+          {/* Router Interfaces - Show Fa0/1 (bottom interface) */}
           {devices.filter(d => d.device_id.toLowerCase().includes('router') || d.device_id.toLowerCase().includes('r1')).map((router, index) => (
             <div key={index} className="flex items-center gap-4">
-              {Array.from({ length: router.interface_count || 0 }, (_, i) => (
-                <div key={i} className="flex flex-col items-center">
-                  <div className="w-16 h-1 bg-gradient-to-r from-green-400 to-green-600 rounded-full shadow-sm"></div>
-                  <div className="text-xs text-muted-foreground mt-1 font-mono">Fa0/{i}</div>
-                </div>
-              ))}
+              {/* Show Fa0/1 interface (bottom interface) */}
+              <div className="flex flex-col items-center">
+                {(() => {
+                  const interfaceStatus = getInterfaceStatus('Fa0/1')
+                  const colorClass = getInterfaceColor(interfaceStatus.status)
+                  return (
+                    <>
+                      <div className={`w-16 h-1 bg-gradient-to-r ${colorClass} rounded-full shadow-sm`}></div>
+                      <div className="text-xs text-muted-foreground mt-1 font-mono">Fa0/1</div>
+                      <div className="text-xs text-muted-foreground mt-1 capitalize">{interfaceStatus.status}</div>
+                    </>
+                  )
+                })()}
+              </div>
             </div>
           ))}
         </div>
@@ -527,8 +648,33 @@ export default function OfficeDetailsPage() {
           )}
         </div>
 
-        {/* Network Summary */}
+        {/* Interface Status Legend */}
         <div className="mt-8 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+          <div className="text-center">
+            <h3 className="font-semibold text-lg mb-4">Interface Status Legend</h3>
+            <div className="flex justify-center gap-6 text-sm">
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-1 bg-gradient-to-r from-green-400 to-green-600 rounded-full"></div>
+                <span className="text-green-600 font-medium">Up - Connected</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-1 bg-gradient-to-r from-red-400 to-red-600 rounded-full"></div>
+                <span className="text-red-600 font-medium">Down - Disconnected</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-1 bg-gradient-to-r from-blue-400 to-blue-600 rounded-full"></div>
+                <span className="text-blue-600 font-medium">Idle - No Activity</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-1 bg-gradient-to-r from-gray-400 to-gray-600 rounded-full"></div>
+                <span className="text-gray-600 font-medium">Unknown - No Data</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Network Summary */}
+        <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
           <div className="text-center">
             <h3 className="font-semibold text-lg mb-2">Network Summary</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
@@ -714,8 +860,24 @@ export default function OfficeDetailsPage() {
                 <p className="text-sm font-medium text-orange-600 dark:text-orange-400">Warnings</p>
                 <p className="text-3xl font-bold text-orange-900 dark:text-orange-100">{deviceStats.warning}</p>
               </div>
-              <div className="p-3 bg-orange-500 rounded-full">
-                <AlertTriangle className="h-6 w-6 text-white" />
+              <div className="flex items-center gap-2">
+                <div className="p-3 bg-orange-500 rounded-full">
+                  <AlertTriangle className="h-6 w-6 text-white" />
+                </div>
+                {deviceStats.warning > 0 && (
+                  <AITroubleshootModal
+                    device={office.office}
+                    metric="office.warnings.count"
+                    value={`${deviceStats.warning} warning devices`}
+                    suggestion="Analyze warning conditions and device issues"
+                    severity="warn"
+                  >
+                    <Button variant="outline" size="sm" className="h-8 px-2 text-xs">
+                      <Bot className="h-3 w-3 mr-1" />
+                      AI Fix
+                    </Button>
+                  </AITroubleshootModal>
+                )}
               </div>
             </div>
           </CardContent>
@@ -728,8 +890,24 @@ export default function OfficeDetailsPage() {
                 <p className="text-sm font-medium text-red-600 dark:text-red-400">Critical Issues</p>
                 <p className="text-3xl font-bold text-red-900 dark:text-red-100">{deviceStats.critical}</p>
               </div>
-              <div className="p-3 bg-red-500 rounded-full">
-                <AlertTriangle className="h-6 w-6 text-white" />
+              <div className="flex items-center gap-2">
+                <div className="p-3 bg-red-500 rounded-full">
+                  <AlertTriangle className="h-6 w-6 text-white" />
+                </div>
+                {deviceStats.critical > 0 && (
+                  <AITroubleshootModal
+                    device={office.office}
+                    metric="office.critical.count"
+                    value={`${deviceStats.critical} critical devices`}
+                    suggestion="Analyze critical issues and device failures"
+                    severity="error"
+                  >
+                    <Button variant="outline" size="sm" className="h-8 px-2 text-xs">
+                      <Bot className="h-3 w-3 mr-1" />
+                      AI Fix
+                    </Button>
+                  </AITroubleshootModal>
+                )}
               </div>
             </div>
           </CardContent>
@@ -964,10 +1142,27 @@ export default function OfficeDetailsPage() {
 
         <TabsContent value="health" className="space-y-6">
           {/* Comprehensive Health Dashboard */}
-          <HealthDashboard 
-            devices={devices} 
-            officeName={`${office.office} Site Health`}
-          />
+          <div className="relative">
+            <HealthDashboard 
+              devices={devices} 
+              officeName={`${office.office} Site Health`}
+            />
+            {/* AI Troubleshoot Button for Office Health */}
+            <div className="absolute top-4 right-4">
+              <AITroubleshootModal
+                device={office.office}
+                metric="office.health.overall"
+                value={`${officeHealthScore}% health score`}
+                suggestion="Analyze overall office health and device performance"
+                severity={officeHealthStatus === 'critical' ? 'error' : officeHealthStatus === 'warning' ? 'warn' : 'info'}
+              >
+                <Button variant="outline" size="sm" className="flex items-center gap-2 bg-white/90 hover:bg-white shadow-lg">
+                  <Bot className="h-4 w-4" />
+                  AI Health Analysis
+                </Button>
+              </AITroubleshootModal>
+            </div>
+          </div>
           
           {/* Individual Device Health Monitors */}
           <Card>
@@ -1053,48 +1248,88 @@ export default function OfficeDetailsPage() {
         <TabsContent value="devices" className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Server className="h-5 w-5 text-blue-600" />
-                Connected Devices
-              </CardTitle>
-              <CardDescription>
-                Network devices associated with this office
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Server className="h-5 w-5 text-blue-600" />
+                    Connected Devices
+                  </CardTitle>
+                  <CardDescription>
+                    Network devices associated with this office
+                  </CardDescription>
+                </div>
+                <AITroubleshootModal
+                  device={office.office}
+                  metric="office.devices.status"
+                  value={`${deviceStats.online} online, ${deviceStats.offline} offline, ${deviceStats.critical} critical`}
+                  suggestion="Analyze device connectivity and health issues"
+                  severity={deviceStats.critical > 0 ? "error" : deviceStats.offline > 0 ? "warn" : "info"}
+                >
+                  <Button variant="outline" size="sm" className="flex items-center gap-2">
+                    <Bot className="h-4 w-4" />
+                    AI Device Analysis
+                  </Button>
+                </AITroubleshootModal>
+              </div>
             </CardHeader>
             <CardContent>
               {devices.length > 0 ? (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {devices.map((device) => (
-                    <Link key={device.hostid} href={`/devices/${device.hostid}`}>
-                      <Card className="hover:shadow-lg transition-all duration-200 border-l-4 border-l-blue-500 cursor-pointer">
-                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                          <CardTitle className="text-sm font-medium flex items-center gap-2">
-                            {getDeviceIcon(device.device_id)}
-                            {device.device_id}
-                          </CardTitle>
-                          {getDeviceStatusBadge(device.status, device.severity)}
-                        </CardHeader>
-                        <CardContent className="space-y-3">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground">Host ID:</span>
-                            <span className="font-mono">{device.hostid}</span>
-                          </div>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground">Interfaces:</span>
-                            <span className="font-semibold">{device.interface_count || 0}</span>
-                          </div>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground">Metrics:</span>
-                            <span className="font-semibold">{device.total_metrics || 0}</span>
-                          </div>
-                          <div className="pt-2 border-t">
-                            <p className="text-xs text-muted-foreground">
-                              Last seen: {new Date(device.last_seen).toLocaleString()}
-                            </p>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </Link>
+                    <div key={device.hostid} className="relative">
+                      <Link href={`/devices/${device.hostid}`}>
+                        <Card className="hover:shadow-lg transition-all duration-200 border-l-4 border-l-blue-500 cursor-pointer">
+                          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-medium flex items-center gap-2">
+                              {getDeviceIcon(device.device_id)}
+                              {device.device_id}
+                            </CardTitle>
+                            <div className="flex items-center gap-2">
+                              {getDeviceStatusBadge(device.status, device.severity)}
+                              {/* AI Troubleshoot Button for devices with issues */}
+                              {(device.severity === 'critical' || device.severity === 'warning' || device.status === 'Down') && (
+                                <AITroubleshootModal
+                                  device={device.device_id}
+                                  metric={`device.${device.device_id}.status`}
+                                  value={device.status}
+                                  suggestion={`Device ${device.device_id} has issues - check connectivity and performance`}
+                                  severity={device.severity === 'critical' ? 'error' : 'warn'}
+                                >
+                                  <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    className="h-6 px-2 text-xs"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <Bot className="h-3 w-3 mr-1" />
+                                    AI Fix
+                                  </Button>
+                                </AITroubleshootModal>
+                              )}
+                            </div>
+                          </CardHeader>
+                          <CardContent className="space-y-3">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">Host ID:</span>
+                              <span className="font-mono">{device.hostid}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">Interfaces:</span>
+                              <span className="font-semibold">{device.interface_count || 0}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">Metrics:</span>
+                              <span className="font-semibold">{device.total_metrics || 0}</span>
+                            </div>
+                            <div className="pt-2 border-t">
+                              <p className="text-xs text-muted-foreground">
+                                Last seen: {new Date(device.last_seen).toLocaleString()}
+                              </p>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </Link>
+                    </div>
                   ))}
                 </div>
               ) : (
@@ -1113,13 +1348,29 @@ export default function OfficeDetailsPage() {
         <TabsContent value="architecture" className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Network className="h-5 w-5 text-green-600" />
-                Network Architecture
-              </CardTitle>
-              <CardDescription>
-                Visual representation of the office network topology
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Network className="h-5 w-5 text-green-600" />
+                    Network Architecture
+                  </CardTitle>
+                  <CardDescription>
+                    Visual representation of the office network topology
+                  </CardDescription>
+                </div>
+                <AITroubleshootModal
+                  device={office.office}
+                  metric="network.architecture.analysis"
+                  value={`${deviceStats.total} devices, ${deviceStats.online} online`}
+                  suggestion="Analyze network architecture and connectivity issues"
+                  severity="info"
+                >
+                  <Button variant="outline" size="sm" className="flex items-center gap-2">
+                    <Bot className="h-4 w-4" />
+                    AI Network Analysis
+                  </Button>
+                </AITroubleshootModal>
+              </div>
             </CardHeader>
             <CardContent>
               <NetworkArchitecture />

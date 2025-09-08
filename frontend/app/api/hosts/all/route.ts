@@ -10,12 +10,14 @@ interface Host {
   total_metrics?: number;
   status?: string;
   severity?: string;
+  device_status?: 'occupied' | 'available';
 }
 
 export async function GET(request: NextRequest) {
   try {
     const metricsCollection = await getCollection('metrics_ts');
     const eventsCollection = await getCollection('events');
+    const officesCollection = await getCollection('offices');
 
     // Get unique hosts from metrics collection, excluding Zabbix server
     const hostsFromMetrics = await metricsCollection.aggregate([
@@ -37,7 +39,8 @@ export async function GET(request: NextRequest) {
           total_metrics: { $sum: 1 },
           interface_count: {
             $addToSet: '$meta.ifindex'
-          }
+          },
+          device_status: { $first: '$meta.device_status' }
         }
       },
       {
@@ -55,10 +58,29 @@ export async function GET(request: NextRequest) {
                 cond: { $ne: ['$$this', null] }
               }
             }
-          }
+          },
+          device_status: { $ifNull: ['$device_status', 'available'] }
         }
       }
     ]).toArray();
+
+    // Get all assigned device IDs from offices to determine device status
+    const assignedDevices = await officesCollection.aggregate([
+      {
+        $unwind: {
+          path: "$device_ids",
+          preserveNullAndEmptyArrays: true
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          assigned_device_ids: { $addToSet: "$device_ids" }
+        }
+      }
+    ]).toArray();
+
+    const assignedDeviceIds = assignedDevices.length > 0 ? assignedDevices[0].assigned_device_ids : [];
 
     // Get latest alert status for each host
     const hostsWithAlerts = await eventsCollection.aggregate([
@@ -92,13 +114,19 @@ export async function GET(request: NextRequest) {
       }
     ]).toArray();
 
-    // Merge hosts with their alert status
+    // Merge hosts with their alert status and automatically determine device status
     const hosts = hostsFromMetrics.map(host => {
       const alertInfo = hostsWithAlerts.find(alert => alert.hostid === host.hostid);
+      
+      // Automatically determine device status based on office assignments
+      const isAssignedToOffice = assignedDeviceIds.includes(host.hostid);
+      const deviceStatus = isAssignedToOffice ? 'occupied' : 'available';
+      
       return {
         ...host,
         status: alertInfo?.status || 'Operational',
-        severity: alertInfo?.severity || 'info'
+        severity: alertInfo?.severity || 'info',
+        device_status: deviceStatus
       };
     });
 

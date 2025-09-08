@@ -217,12 +217,21 @@ def main():
         sys.exit(1)
 
     network_hosts = []
+    zabbix_server_info = None
+    
     for h in hosts:
         hid = h.get("hostid")
         hostname = h.get("host", "").lower()
         
-        # Skip Zabbix server
+        # Collect Zabbix server information instead of skipping
         if "zabbix" in hostname or "server" in hostname:
+            zabbix_server_info = {
+                "hostid": hid,
+                "hostname": h.get("host"),
+                "name": h.get("name"),
+                "interfaces": h.get("interfaces", []),
+                "inventory": h.get("inventory", {})
+            }
             continue
             
         if not hid:
@@ -482,7 +491,8 @@ def main():
                             "ifindex": idx if idx != "_global" else None,
                             "ifdescr": iface_label if iface_label else None,
                             "location": location_str, # Use the determined location string
-                            "geo": geo or None # Store full geo object
+                            "geo": geo or None, # Store full geo object
+                            "device_status": "available" # Default device status - can be updated via API
                         },
                         "metric": key or name,
                         "value": numeric_value if numeric_value is not None else raw_value,
@@ -490,25 +500,95 @@ def main():
                     }
                     all_metrics.append(metric_doc)
 
-                    # Build event doc only when status != OK (so we don't flood the events collection)
-                    if status != "OK":
-                        event_doc = {
-                            "device_id": dev,
-                            "hostid": hostid,
-                            "iface": iface_label,
-                            "metric": key or name,
-                            "value": raw_value,
-                            "status": status,
-                            "severity": "warning" if "High" in status else "critical" if "Operational" in status else "info",
-                            "detected_at": int(time.time()),
-                            "location": location_str, # Use the determined location string
-                            "evidence": {"rate_bps": rate_bps, "link_speed_bps": link_speed_bps},
-                            "labels": [label for label in ([ "link-down" ] if "Operational" in status else ["high-bandwidth"] if "High bandwidth" in status else [])]
-                        }
-                        all_events.append(event_doc)
+                    # Build event doc for all statuses to provide comprehensive monitoring
+                    # Determine severity based on actual status values
+                    if status == "Down":
+                        severity = "critical"
+                        labels = ["link-down", "interface-down"]
+                    elif status == "Idle":
+                        severity = "warning"
+                        labels = ["interface-idle"]
+                    else:  # status == "Up"
+                        severity = "info"
+                        labels = ["interface-up"]
+                    
+                    event_doc = {
+                        "device_id": dev,
+                        "hostid": hostid,
+                        "iface": iface_label,
+                        "metric": key or name,
+                        "value": raw_value,
+                        "status": status,
+                        "severity": severity,
+                        "detected_at": int(time.time()),
+                        "location": location_str, # Use the determined location string
+                        "evidence": {"rate_bps": rate_bps, "link_speed_bps": link_speed_bps},
+                        "labels": labels
+                    }
+                    all_events.append(event_doc)
 
                     # print local line
                     print(f"[{dev}] {iface_label} - {name}: {raw_value} | rate_bps={rate_bps} -> {status}")
+
+            # Add interface count metric for this device
+            interface_count_metric = {
+                "ts": int(time.time()),
+                "meta": {
+                    "device_id": dev,
+                    "hostid": hostid,
+                    "ifindex": None,
+                    "ifdescr": None,
+                    "location": location_str,
+                    "geo": geo or None,
+                    "device_status": "available"
+                },
+                "metric": "interface_count",
+                "value": len([idx for idx in by_iface.keys() if idx != "_global"]),
+                "value_type": "gauge"
+            }
+            all_metrics.append(interface_count_metric)
+
+            # Add total metrics count for this device
+            total_metrics_metric = {
+                "ts": int(time.time()),
+                "meta": {
+                    "device_id": dev,
+                    "hostid": hostid,
+                    "ifindex": None,
+                    "ifdescr": None,
+                    "location": location_str,
+                    "geo": geo or None,
+                    "device_status": "available"
+                },
+                "metric": "total_metrics",
+                "value": network_items_found,
+                "value_type": "gauge"
+            }
+            all_metrics.append(total_metrics_metric)
+
+        # Add Zabbix server information as a special metric
+        if zabbix_server_info:
+            zabbix_server_metric = {
+                "ts": int(time.time()),
+                "meta": {
+                    "device_id": "zabbix_server",
+                    "hostid": zabbix_server_info["hostid"],
+                    "ifindex": None,
+                    "ifdescr": None,
+                    "location": "Zabbix Server",
+                    "geo": None,
+                    "server_type": "zabbix_server"
+                },
+                "metric": "zabbix_server_info",
+                "value": {
+                    "hostname": zabbix_server_info["hostname"],
+                    "name": zabbix_server_info["name"],
+                    "interfaces": zabbix_server_info["interfaces"],
+                    "inventory": zabbix_server_info["inventory"]
+                },
+                "value_type": "gauge"
+            }
+            all_metrics.append(zabbix_server_metric)
 
         # send bulk metrics & events to backend
         if BACKEND_METRICS_ENDPOINT and all_metrics:

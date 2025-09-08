@@ -20,6 +20,8 @@ interface Office {
     phone: string
     address: string
   }
+  health_score?: number
+  health_status?: 'excellent' | 'good' | 'warning' | 'critical'
 }
 
 interface LocationMapProps {
