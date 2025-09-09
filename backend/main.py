@@ -1,5 +1,5 @@
 # backend/main.py
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from typing import List, Optional, Any, Dict
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -113,6 +113,20 @@ class EventIn(BaseModel):
     detected_at: Optional[int] = Field(default_factory=lambda: int(time.time()))
     evidence: Optional[Dict[str, Any]] = None
     labels: Optional[List[str]] = []
+
+class InterfaceOut(BaseModel):
+    name: str
+    status: Optional[str] = None
+    ifindex: Optional[int] = None
+    ifdescr: Optional[str] = None
+    connected_to: Optional[str] = None
+    connected_interface: Optional[str] = None
+
+class DeviceOut(BaseModel):
+    device_id: str
+    hostid: Optional[str] = None
+    interfaces: List[InterfaceOut] = []
+    connections: List[Dict[str, Any]] = []
 
 # ---------- endpoints ----------
 @app.on_event("startup")
@@ -297,3 +311,40 @@ async def get_database_stats():
         
     except Exception as e:
         raise HTTPException(500, f"Failed to get stats: {str(e)}")
+
+@app.get("/devices/with-interfaces", response_model=List[DeviceOut])
+async def get_devices_with_interfaces(
+    office: Optional[str] = Query(None),
+    city: Optional[str] = Query(None),
+    country: Optional[str] = Query(None)
+):
+    # Aggregate devices
+    match = {}
+    if office: match["meta.location"] = office
+    if city: match["meta.city"] = city
+    if country: match["meta.country"] = country
+    devices_cursor = db[METRICS_COLL].aggregate([
+        {"$match": match},
+        {"$group": {
+            "_id": "$meta.device_id",
+            "hostid": {"$first": "$meta.hostid"},
+            "interfaces": {"$addToSet": {
+                "name": "$meta.ifdescr",
+                "ifindex": "$meta.ifindex",
+                "status": "$value.status" if "$value.status" else None,
+                "connected_to": "$meta.connected_to" if "$meta.connected_to" else None,
+                "connected_interface": "$meta.connected_interface" if "$meta.connected_interface" else None
+            }}
+        }}
+    ])
+    devices = []
+    async for d in devices_cursor:
+        device = DeviceOut(
+            device_id=d["_id"],
+            hostid=d.get("hostid"),
+            interfaces=[InterfaceOut(**iface) for iface in d.get("interfaces", [])],
+            connections=[] # Optionally fill with inferred connections
+        )
+        # Optionally, infer connections here based on interface data
+        devices.append(device)
+    return devices

@@ -73,9 +73,19 @@ export default function OfficesPage() {
             const devicesResponse = await fetch('/api/hosts/all')
             if (devicesResponse.ok) {
               const devicesData = await devicesResponse.json()
-              const officeDevices = devicesData.hosts.filter((device: any) => 
-                device.location === office.office
-              )
+              const normalize = (val?: string) => (val || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '')
+              const belongsToOffice = (device: any, office: any): boolean => {
+                const deviceLoc = normalize(device.location)
+                const candidates = [office.office, office._id, `${office.city}-${office.office}`, `${office.country}-${office.city}-${office.office}`]
+                  .filter(Boolean).map(normalize)
+                const idMatch = Array.isArray(office.device_ids) && office.device_ids.some((x: any) => {
+                  const n = normalize(typeof x === 'object' ? (x.hostid || x.device_id || x) : x)
+                  const hostCandidates = [device.hostid, device.device_id, device.name].filter(Boolean).map(normalize)
+                  return hostCandidates.includes(n)
+                })
+                return idMatch || candidates.some((c: string) => deviceLoc === c || deviceLoc.includes(c))
+              }
+              const officeDevices = devicesData.hosts.filter((device: any) => belongsToOffice(device, office))
               
               // Calculate health data
               const health = await calculateOfficeHealth(officeDevices)
@@ -163,15 +173,15 @@ export default function OfficesPage() {
         <div className="flex items-center gap-4 mb-4">
           <BackButton />
         </div>
-        <div className="flex items-center justify-between">
+        <div className="glass-panel p-5 md:p-6 flex items-center justify-between" style={{ ['--glass-radius' as any]: '0px' }}>
           <div>
-            <h1 className="text-2xl font-semibold text-balance">{city} - Network Health Dashboard</h1>
-            <p className="text-sm text-muted-foreground">
+            <h1 className="text-2xl font-semibold text-slate-100">{city} - Network Health Dashboard</h1>
+            <p className="text-sm text-slate-300">
               {country} • {totalStats.totalOffices} offices 
             </p>
           </div>
           <Button 
-            className="flex items-center gap-2"
+            className="btn-glass flex items-center gap-2"
             onClick={handleCreateOffice}
           >
             <Plus className="h-4 w-4" />

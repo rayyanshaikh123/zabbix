@@ -39,37 +39,34 @@ export function CountryHealthSummary({
 }: CountryHealthSummaryProps) {
   const [chartType, setChartType] = useState<ChartType>('circular')
   const [showCustomizer, setShowCustomizer] = useState(false)
+  const [showCities, setShowCities] = useState(true)
   // Calculate health statistics based on city data
-  const citiesWithOffices = cities.filter(city => city.totalOffices > 0).length
-  const citiesWithDevices = cities.filter(city => city.totalDevices > 0).length
-  const citiesWithoutOffices = cities.filter(city => city.totalOffices === 0).length
-  const citiesWithoutDevices = cities.filter(city => city.totalDevices === 0).length
+  const healthyCities = cities.filter(city => city.totalOffices > 0 && city.totalDevices > 0).length;
+  const degradedCities = cities.filter(city => city.totalOffices > 0 && city.totalDevices === 0).length;
+  const downCities = cities.filter(city => city.totalOffices === 0).length;
 
-  // Calculate overall country health percentage
-  let healthScore = 0
+  let healthScore = 0;
   if (cities.length > 0) {
-    // Calculate health based on cities that have both offices AND devices
-    const healthyCities = cities.filter(city => 
-      city.totalOffices > 0 && city.totalDevices > 0
-    ).length
-    
-    // Health score is percentage of fully healthy cities (offices + devices)
-    healthScore = Math.round((healthyCities / cities.length) * 100)
+    healthScore = Math.round((healthyCities / cities.length) * 100);
   }
+  let degradedPercentage = cities.length > 0 ? Math.round((degradedCities / cities.length) * 100) : 0;
+  let downPercentage = cities.length > 0 ? Math.round((downCities / cities.length) * 100) : 0;
 
   // Determine overall health status
-  let healthStatus: 'excellent' | 'good' | 'warning' | 'critical' = 'critical'
-  let statusColor = 'text-red-400'
-
-  if (healthScore >= 90) {
-    healthStatus = 'excellent'
-    statusColor = 'text-green-400'
+  let healthStatus: 'excellent' | 'good' | 'warning' | 'critical' = 'critical';
+  let statusColor = 'text-red-400';
+  if (healthScore >= 90 && downCities === 0) {
+    healthStatus = 'excellent';
+    statusColor = 'text-green-400';
   } else if (healthScore >= 75) {
-    healthStatus = 'good'
-    statusColor = 'text-blue-400'
-  } else if (healthScore >= 50) {
-    healthStatus = 'warning'
-    statusColor = 'text-orange-400'
+    healthStatus = 'good';
+    statusColor = 'text-blue-400';
+  } else if (degradedPercentage > 0) {
+    healthStatus = 'warning';
+    statusColor = 'text-orange-400';
+  } else if (downPercentage > 0) {
+    healthStatus = 'critical';
+    statusColor = 'text-red-400';
   }
 
   const getStatusIcon = () => {
@@ -93,15 +90,15 @@ export function CountryHealthSummary({
 
   return (
     <Card 
-      className={`hover:shadow-lg transition-all duration-200 w-full max-w-7xl ${className}`}
+      className={`glass-panel hover:shadow-lg transition-all duration-200 w-full max-w-7xl `}
       onClick={handleCardClick}
     >
-      <CardContent className="p-8">
+      <CardContent className=" ">
         {/* Header */}
         <div className="mb-6">
           <div className="flex items-center justify-between mb-1">
-            <h3 className="text-xl font-bold text-gray-900 dark:text-white">
-              {countryName} Health By City wise
+            <h3 className="text-xl font-bold text-slate-100">
+              {countryName} Overall Health
             </h3>
             <ChartTypeSelector
               chartType={chartType}
@@ -110,86 +107,43 @@ export function CountryHealthSummary({
               onCustomizerToggle={setShowCustomizer}
             />
           </div>
-          <p className="text-sm text-muted-foreground">
-            {cities.length} cit{cities.length !== 1 ? 'ies' : 'y'} • {totalOffices} office{totalOffices !== 1 ? 's' : ''} • {totalDevices} device{totalDevices !== 1 ? 's' : ''} total
-          </p>
+        
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-          {/* City Status Legend */}
-          <div className="space-y-3">
-            <h4 className="font-semibold text-gray-900 dark:text-white">City Status Legend</h4>
-            <div className="space-y-2">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                <span className="text-sm text-gray-700 dark:text-gray-300">With Offices</span>
-                <Badge variant="outline" className="ml-auto text-xs">{citiesWithOffices}</Badge>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-                <span className="text-sm text-gray-700 dark:text-gray-300">With Devices</span>
-                <Badge variant="outline" className="ml-auto text-xs">{citiesWithDevices}</Badge>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
-                <span className="text-sm text-gray-700 dark:text-gray-300">No Offices</span>
-                <Badge variant="outline" className="ml-auto text-xs">{citiesWithoutOffices}</Badge>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-gray-500 rounded-full"></div>
-                <span className="text-sm text-gray-700 dark:text-gray-300">No Devices</span>
-                <Badge variant="outline" className="ml-auto text-xs">{citiesWithoutDevices}</Badge>
-              </div>
-            </div>
-          </div>
-
-          {/* Overall Health Customizable Chart */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="flex flex-col items-center">
-            <h4 className="font-semibold text-gray-900 dark:text-white mb-6">Overall Health</h4>
+            <h4 className="font-semibold text-slate-100 mb-6">Overall Health</h4>
             <HealthChartCustomizer
               healthScore={healthScore}
               status={healthStatus}
               size="xl"
               showDetails={true}
-              className="mb-6"
+              className="mb-2"
               chartType={chartType}
               onChartTypeChange={setChartType}
             />
           </div>
-
-          {/* City List */}
           <div>
-            <h4 className="font-semibold text-gray-900 dark:text-white mb-4">City Status</h4>
-            <div className="space-y-2 max-h-80 overflow-y-auto">
+            <h4 className="font-semibold text-slate-100 mb-3">Cities</h4>
+            <div className="max-h-72 overflow-y-auto border border-white/10 rounded-md">
               {cities.length > 0 ? (
-                cities.map((city, index) => (
-                  <div 
-                    key={city.city} 
-                    className="flex items-center gap-3 p-3 rounded hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                  >
-                    <div className={`w-3 h-3 rounded-sm ${
-                      city.totalOffices > 0 && city.totalDevices > 0 ? 'bg-green-500' :
-                      city.totalOffices > 0 && city.totalDevices === 0 ? 'bg-blue-500' :
-                      city.totalOffices === 0 ? 'bg-orange-500' : 'bg-gray-500'
-                    }`}></div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                        {city.city}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {city.totalOffices} office{city.totalOffices !== 1 ? 's' : ''} • {city.totalDevices} device{city.totalDevices !== 1 ? 's' : ''}
-                      </div>
+                cities.map((city) => {
+                  const colorClass = city.totalOffices > 0 && city.totalDevices > 0
+                    ? 'bg-green-500'
+                    : city.totalOffices > 0 && city.totalDevices === 0
+                      ? 'bg-blue-500'
+                      : city.totalOffices === 0
+                        ? 'bg-orange-500'
+                        : 'bg-gray-500'
+                  return (
+                    <div key={city.city} className="flex items-center gap-3 px-3 py-2 hover:bg-white/5">
+                      <span className={`w-2.5 h-2.5 rounded-full ${colorClass}`}></span>
+                      <span className="text-sm text-slate-200">{city.city}</span>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Building className="h-3 w-3 text-muted-foreground" />
-                    </div>
-                  </div>
-                ))
+                  )
+                })
               ) : (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Globe className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">No cities found</p>
-                </div>
+                <div className="px-3 py-6 text-slate-400 text-sm">No cities</div>
               )}
             </div>
           </div>

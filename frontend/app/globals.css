@@ -3,7 +3,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
-:root {
+::root {
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -53,6 +53,13 @@
   --chart-2: hsl(217 91% 60%); /* blue-500 */
   --chart-3: hsl(var(--warn));
   --chart-4: hsl(var(--crit));
+
+  /* Light theme gradient */
+  --bg-gradient: radial-gradient(1100px 700px at 10% -10%, #f5f7fb 0%, #eef2f8 40%, #e9eef7 70%, #e6ecf6 100%);
+
+  /* Glass panel tokens (light) */
+  --panel-bg: rgba(255, 255, 255, 0.6);
+  --panel-border: rgba(0, 0, 0, 0.08);
 }
 
 .dark {
@@ -88,6 +95,13 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.269 0 0);
   --sidebar-ring: oklch(0.439 0 0);
+
+  /* Even darker gradient for dark mode */
+  --bg-gradient: radial-gradient(1400px 900px at 15% -15%, #0a0f1c 0%, #070b14 40%, #050a12 75%, #02060b 100%);
+
+  /* Glass panel tokens (dark) */
+  --panel-bg: rgba(255, 255, 255, 0.06);
+  --panel-border: rgba(255, 255, 255, 0.14);
 }
 
 @theme inline {
@@ -133,12 +147,25 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring/50; 
   }
   body {
     @apply bg-background text-foreground;
+    background: var(--bg-gradient);
   }
 }
+
+/* Glassmorphism helpers */
+.glass-panel {
+  background: var(--panel-bg);
+  -webkit-backdrop-filter: saturate(140%) blur(16px);
+  backdrop-filter: saturate(140%) blur(16px);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--glass-radius, 16px);
+  box-shadow: 0 8px 28px rgba(2, 6, 23, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.glass-hover { transition: transform 180ms ease, box-shadow 180ms ease, background-color 180ms ease, border-color 180ms ease; }
+.glass-hover:hover { transform: translateY(-1px); box-shadow: 0 10px 34px rgba(2,6,23,.18), inset 0 1px 0 rgba(255,255,255,.06); }
 
 @layer components {
   .card {

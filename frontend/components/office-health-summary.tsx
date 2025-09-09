@@ -42,54 +42,30 @@ export function OfficeHealthSummary({
   const [chartType, setChartType] = useState<ChartType>('circular')
   const [showCustomizer, setShowCustomizer] = useState(false)
   // Calculate health statistics - fix the logic
-  const healthyDevices = devices.filter(d => 
-    (d.status === 'Up' || d.status === 'Operational') && 
-    (d.severity === 'info' || d.severity === 'healthy' || !d.severity)
-  ).length
-  
-  const downDevices = devices.filter(d => 
-    d.status === 'Down' || d.status === 'Offline'
-  ).length
-  
-  const criticalDevices = devices.filter(d => 
-    d.severity === 'critical' || d.severity === 'error'
-  ).length
-  
-  const warningDevices = devices.filter(d => 
-    d.severity === 'warning'
-  ).length
-  
-  const unknownDevices = devices.filter(d => 
-    d.severity === 'unknown' || (!d.severity && d.status !== 'Up' && d.status !== 'Operational')
-  ).length
+  const healthyDevices = devices.filter(d => d.status === 'Up' || d.status === 'Operational').length;
+  const degradedDevices = devices.filter(d => d.status === 'Idle').length;
+  const downDevices = devices.filter(d => d.status === 'Down' || d.status === 'Offline').length;
+  const totalDevices = devices.length > 0 ? devices.length : deviceCount;
 
-  // Calculate healthy percentage based on actual device count
-  // Use deviceCount prop when devices array is empty (fallback to database count)
-  const totalDevices = devices.length > 0 ? devices.length : deviceCount
-  let healthyPercentage = totalDevices > 0 ? Math.round((healthyDevices / totalDevices) * 100) : 0
-  
-  // If we have device count but no actual device data, assume 100% healthy
-  if (devices.length === 0 && deviceCount > 0) {
-    healthyPercentage = 100
-  }
+  // Count 'Idle' devices as degraded (partial health)
+  let healthyPercentage = totalDevices > 0 ? Math.round(((healthyDevices + 0.5 * degradedDevices) / totalDevices) * 100) : 0;
+  let degradedPercentage = totalDevices > 0 ? Math.round((degradedDevices / totalDevices) * 100) : 0;
+  let downPercentage = totalDevices > 0 ? Math.round((downDevices / totalDevices) * 100) : 0;
 
-  // Determine overall health status
-  let healthStatus: 'excellent' | 'good' | 'warning' | 'critical' = 'critical'
-  let statusColor = 'text-red-400'
-
-  // If we have device count but no actual device data, assume healthy
-  if (devices.length === 0 && deviceCount > 0) {
-    healthStatus = 'excellent'
-    statusColor = 'text-green-400'
-  } else if (healthyPercentage >= 90 && criticalDevices === 0 && downDevices === 0) {
-    healthStatus = 'excellent'
-    statusColor = 'text-green-400'
-  } else if (healthyPercentage >= 75 && criticalDevices === 0) {
-    healthStatus = 'good'
-    statusColor = 'text-blue-400'
-  } else if (healthyPercentage >= 50) {
-    healthStatus = 'warning'
-    statusColor = 'text-orange-400'
+  let healthStatus: 'excellent' | 'good' | 'warning' | 'critical' = 'critical';
+  let statusColor = 'text-red-400';
+  if (healthyPercentage >= 90 && downDevices === 0) {
+    healthStatus = 'excellent';
+    statusColor = 'text-green-400';
+  } else if (healthyPercentage >= 75) {
+    healthStatus = 'good';
+    statusColor = 'text-blue-400';
+  } else if (degradedPercentage > 0) {
+    healthStatus = 'warning';
+    statusColor = 'text-orange-400';
+  } else if (downPercentage > 0) {
+    healthStatus = 'critical';
+    statusColor = 'text-red-400';
   }
 
   const getStatusIcon = () => {
@@ -129,15 +105,14 @@ export function OfficeHealthSummary({
 
   return (
     <Card 
-      className={`hover:shadow-lg transition-all duration-200 w-full max-w-7xl ${className}`}
+      className={`glass-panel hover:shadow-lg transition-all duration-200 w-full max-w-7xl ${className}`}
       onClick={handleCardClick}
     >
-      <CardContent className="p-8">
-        {/* Header */}
+      <CardContent className="">
         <div className="mb-6">
           <div className="flex items-center justify-between mb-1">
-            <h3 className="text-xl font-bold text-gray-900 dark:text-white">
-              {officeName} Health By Device wise
+            <h3 className="text-xl font-bold text-slate-100">
+              {officeName} 
             </h3>
             <ChartTypeSelector
               chartType={chartType}
@@ -146,85 +121,32 @@ export function OfficeHealthSummary({
               onCustomizerToggle={setShowCustomizer}
             />
           </div>
-          <p className="text-sm text-muted-foreground">
-            {totalDevices} device{totalDevices !== 1 ? 's' : ''} total
-          </p>
         </div>
-
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-          {/* Health Status Legend */}
-          <div className="space-y-3">
-            <h4 className="font-semibold text-gray-900 dark:text-white">Health Status Legend</h4>
-            <div className="space-y-2">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                <span className="text-sm text-gray-700 dark:text-gray-300">Healthy</span>
-                <Badge variant="outline" className="ml-auto text-xs">{healthyDevices}</Badge>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                <span className="text-sm text-gray-700 dark:text-gray-300">Down</span>
-                <Badge variant="outline" className="ml-auto text-xs">{downDevices}</Badge>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
-                <span className="text-sm text-gray-700 dark:text-gray-300">Critical</span>
-                <Badge variant="outline" className="ml-auto text-xs">{criticalDevices}</Badge>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-gray-500 rounded-full"></div>
-                <span className="text-sm text-gray-700 dark:text-gray-300">Unknown</span>
-                <Badge variant="outline" className="ml-auto text-xs">{unknownDevices}</Badge>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-                <span className="text-sm text-gray-700 dark:text-gray-300">Degraded</span>
-                <Badge variant="outline" className="ml-auto text-xs">{warningDevices}</Badge>
-              </div>
-            </div>
-          </div>
-
-          {/* Overall Health Customizable Chart */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="flex flex-col items-center">
-            <h4 className="font-semibold text-gray-900 dark:text-white mb-6">Overall Health</h4>
+            <h4 className="font-semibold text-slate-100 mb-6">Health Status</h4>
             <HealthChartCustomizer
               healthScore={healthyPercentage}
               status={healthStatus}
               size="xl"
               showDetails={true}
-              className="mb-6"
+              className="mb-4"
               chartType={chartType}
               onChartTypeChange={setChartType}
             />
           </div>
-
-          {/* Device List */}
           <div>
-            <h4 className="font-semibold text-gray-900 dark:text-white mb-4">Device Status</h4>
-            <div className="space-y-2 max-h-80 overflow-y-auto">
+            <h4 className="font-semibold text-slate-100 mb-3">Devices</h4>
+            <div className="max-h-72 overflow-y-auto border border-white/10 rounded-md">
               {devices.length > 0 ? (
-                devices.map((device, index) => (
-                  <Link 
-                    key={device.hostid} 
-                    href={`/devices/${device.hostid}`}
-                    className="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors cursor-pointer"
-                  >
-                    <div className={`w-3 h-3 rounded-sm ${getDeviceStatusColor(device)}`}></div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                        {device.device_id}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {device.deviceType} • {device.interface_count} interfaces
-                      </div>
-                    </div>
-                  </Link>
+                devices.map((device) => (
+                  <div key={device.hostid || device.device_id} className="flex items-center gap-3 px-3 py-2 hover:bg-white/5">
+                    <span className={`w-2.5 h-2.5 rounded-full ${getDeviceStatusColor(device)}`}></span>
+                    <span className="text-sm text-slate-200 truncate">{device.device_id}</span>
+                  </div>
                 ))
               ) : (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Activity className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">No devices found</p>
-                </div>
+                <div className="px-3 py-6 text-slate-400 text-sm">No devices</div>
               )}
             </div>
           </div>

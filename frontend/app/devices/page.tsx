@@ -50,11 +50,10 @@ export default async function DevicesPage() {
 
   return (
     <main className="mx-auto max-w-7xl p-6">
-      <header className="mb-6">
-        <div className="flex items-center gap-4 mb-4">
-          <BackButton />
-        </div>
+      <header className="mb-6 glass-panel p-4" style={{ ['--glass-radius' as any]: '0' }}>
+      
         <h1 className="text-2xl font-semibold text-balance">All Devices</h1>
+         
         <p className="text-sm text-muted-foreground">Overview of all monitored network devices.</p>
         {hasConnectionError && (
           <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
@@ -72,7 +71,7 @@ export default async function DevicesPage() {
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {hosts.length > 0 ? (hosts.map(host => (
           <Link key={host.hostid} href={`/devices/${host.hostid}`} className="block">
-            <Card className="hover:shadow-lg transition-shadow border-2">
+            <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
                   {getDeviceIcon(host.device_id)}

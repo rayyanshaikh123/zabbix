@@ -74,6 +74,7 @@
   --sidebar-ring: oklch(0.439 0 0);
 }
 
+
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
@@ -114,6 +115,11 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 }
+
+.glass-panel {
+  @apply bg-card/50 backdrop-blur-sm border border-border/50;
+}
+
 
 @layer base {
   * {

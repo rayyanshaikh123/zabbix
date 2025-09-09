@@ -56,6 +56,19 @@ export default function LocationPage() {
 
         // Fetch real device data for each country
         const healthData: { [countryName: string]: any } = {}
+        const normalize = (val?: string) => (val || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '')
+        const belongsToOffice = (device: any, office: any): boolean => {
+          const deviceLoc = normalize(device.location)
+          const candidates = [office.office, office._id, `${office.city}-${office.office}`, `${office.country}-${office.city}-${office.office}`]
+            .filter(Boolean).map(normalize)
+          const idMatch = Array.isArray(office.device_ids) && office.device_ids.some((x: any) => {
+            const n = normalize(typeof x === 'object' ? (x.hostid || x.device_id || x) : x)
+            const hostCandidates = [device.hostid, device.device_id, device.name].filter(Boolean).map(normalize)
+            return hostCandidates.includes(n)
+          })
+          return idMatch || candidates.some((c: string) => deviceLoc === c || deviceLoc.includes(c))
+        }
+
         for (const country of countryData) {
           try {
             // Fetch devices for this country
@@ -63,13 +76,13 @@ export default function LocationPage() {
             if (devicesResponse.ok) {
               const devicesData = await devicesResponse.json()
               const countryDevices = devicesData.hosts.filter((device: any) => 
-                country.offices.some(office => device.location === office.office)
+                country.offices.some(office => belongsToOffice(device, office))
               )
               
               // Group devices by city
               const cityGroups: { [cityName: string]: any[] } = {}
               countryDevices.forEach((device: any) => {
-                const office = country.offices.find(office => device.location === office.office)
+                const office = country.offices.find(office => belongsToOffice(device, office))
                 if (office) {
                   if (!cityGroups[office.city]) {
                     cityGroups[office.city] = []
@@ -145,7 +158,7 @@ export default function LocationPage() {
   if (loading) {
     return (
       <main className="mx-auto max-w-7xl p-6">
-        <div className="text-center py-12">Loading countries data...</div>
+        <div className="glass-panel p-8 text-center text-slate-200">Loading countries data...</div>
       </main>
     )
   }
@@ -153,20 +166,20 @@ export default function LocationPage() {
   return (
     <main className="mx-auto max-w-7xl p-6">
       <header className="mb-6">
-        <div className="flex items-center justify-between">
+        <div className="glass-panel p-5 md:p-6 flex items-center justify-between" style={{ ['--glass-radius' as any]: '0px' }}>
           <div>
-            <h1 className="text-2xl font-semibold text-balance">Nationality - Network Health Dashboard</h1>
-            <p className="text-sm text-muted-foreground">
+            <h1 className="text-2xl font-semibold text-slate-100">Nationality - Network Health Dashboard</h1>
+            <p className="text-sm text-slate-300">
               {countries.length} countries • {countries.reduce((sum, country) => sum + country.totalOffices, 0)} offices • {Object.values(countryHealthData).reduce((sum: number, healthData: any) => sum + (healthData?.totalDevices || 0), 0)} devices
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex items-center border rounded-lg">
+            <div className="glass-panel rounded-none flex items-center border border-white/10">
               <Button
                 variant={viewMode === 'cards' ? 'default' : 'ghost'}
                 size="sm"
                 onClick={() => setViewMode('cards')}
-                className="rounded-r-none"
+                className="rounded-none"
               >
                 <Grid3X3 className="h-4 w-4" />
               </Button>
@@ -174,13 +187,13 @@ export default function LocationPage() {
                 variant={viewMode === 'map' ? 'default' : 'ghost'}
                 size="sm"
                 onClick={() => setViewMode('map')}
-                className="rounded-l-none"
+                className="rounded-none"
               >
                 <Map className="h-4 w-4" />
               </Button>
             </div>
             <Button 
-              className="flex items-center gap-2"
+              className="btn-glass flex items-center gap-2"
               onClick={handleCreateOffice}
             >
               <Plus className="h-4 w-4" />
@@ -206,21 +219,21 @@ export default function LocationPage() {
                       countryName="India"
                       totalOffices={countryData.totalOffices}
                       totalDevices={healthData?.totalDevices || countryData.totalDevices}
-                      className="hover:shadow-lg transition-all duration-200 cursor-pointer"
+                      className="glass-panel hover:shadow-lg transition-all duration-200 cursor-pointer"
                     />
                   ) : (
-                    <Card className="hover:shadow-lg transition-shadow border-2 cursor-pointer">
+                    <Card className="glass-panel hover:shadow-lg transition-shadow cursor-pointer">
                       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle className="text-lg font-medium flex items-center gap-2">
-                          <Globe className="h-5 w-5 text-blue-600" />
+                          <Globe className="h-5 w-5 text-blue-400" />
                           {countryData.country}
                         </CardTitle>
-                        <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                        <ArrowRight className="h-4 w-4 text-slate-400" />
                       </CardHeader>
                       <CardContent>
-                        <div className="text-2xl font-bold">{countryData.totalOffices}</div>
-                        <p className="text-xs text-muted-foreground">offices</p>
-                        <div className="text-sm text-muted-foreground mt-2">
+                        <div className="text-2xl font-bold text-slate-100">{countryData.totalOffices}</div>
+                        <p className="text-xs text-slate-400">offices</p>
+                        <div className="text-sm text-slate-300 mt-2">
                           {countryData.cities.length} cities • {countryData.totalDevices} devices
                         </div>
                       </CardContent>
@@ -230,24 +243,22 @@ export default function LocationPage() {
               )
             })
           ) : (
-            <div className="col-span-full text-center py-12">
-              <Globe className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">No Countries Found</h3>
-              <p className="text-muted-foreground mb-4">
-                No countries with offices were found.
-              </p>
-              <p className="text-sm text-muted-foreground">
-                Create an office to get started.
-              </p>
+            <div className="col-span-full glass-panel p-8 text-center">
+              <Globe className="h-16 w-16 text-slate-400 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2 text-slate-100">No Countries Found</h3>
+              <p className="text-slate-300 mb-4">No countries with offices were found.</p>
+              <p className="text-sm text-slate-400">Create an office to get started.</p>
             </div>
           )}
         </section>
       ) : (
         <section>
-          <LocationMap 
-            offices={countries.flatMap(country => country.offices).filter(office => office.geo?.lat && office.geo?.lon)}
-            className="w-full"
-          />
+          <div className="glass-panel p-4">
+            <LocationMap 
+              offices={countries.flatMap(country => country.offices).filter(office => office.geo?.lat && office.geo?.lon)}
+              className="w-full"
+            />
+          </div>
         </section>
       )}
 

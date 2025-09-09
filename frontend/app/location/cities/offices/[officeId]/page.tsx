@@ -66,6 +66,7 @@ interface Office {
   office: string
   city: string
   country: string
+  device_ids?: string[]
   geo: {
     lat: number
     lon: number
@@ -96,6 +97,7 @@ interface Device {
   location: string
   interface_count: number
   total_metrics: number
+  interfaces?: DynamicInterface[]
 }
 
 interface DeviceStats {
@@ -109,6 +111,22 @@ interface DeviceStats {
   critical: number
   warning: number
   healthy: number
+}
+
+// Types for dynamic network view
+interface DynamicInterface {
+  name?: string;
+  ifindex?: number;
+  ifdescr?: string;
+  status?: string;
+  connected_to?: string;
+  connected_interface?: string;
+}
+interface DynamicDevice {
+  device_id: string;
+  hostid?: string;
+  interfaces?: DynamicInterface[];
+  connections?: any[];
 }
 
 export default function OfficeDetailsPage() {
@@ -129,6 +147,28 @@ export default function OfficeDetailsPage() {
   const [officeHealthScore, setOfficeHealthScore] = useState(0)
   const [officeHealthStatus, setOfficeHealthStatus] = useState<'excellent' | 'good' | 'warning' | 'critical'>('critical')
   const [zabbixServer, setZabbixServer] = useState<any>(null)
+
+  // Helper: robust matching of a device to an office based on location strings
+  const deviceBelongsToOffice = (device: any, officeObj: Office | null): boolean => {
+    if (!device || !officeObj) return false
+    const normalize = (val?: string) => (val || '')
+      .toString()
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+
+    const deviceLocation = normalize(device.location)
+
+    const candidatesRaw = [
+      officeObj.office,
+      officeObj._id,
+      officeObj.city,
+      `${officeObj.city}-${officeObj.office}`,
+      `${officeObj.country}-${officeObj.city}-${officeObj.office}`,
+    ]
+    const candidates = candidatesRaw.map(normalize).filter(Boolean)
+
+    return candidates.some((c) => deviceLocation === c || deviceLocation.includes(c))
+  }
 
   // Fetch Zabbix server information
   const fetchZabbixServer = async () => {
@@ -175,10 +215,34 @@ export default function OfficeDetailsPage() {
       const data = await response.json()
       
       if (data.hosts) {
-        // Filter devices that belong to this office
-        const officeDevices = data.hosts.filter((device: any) => 
-          device.location === office.office
-        )
+        // Prefer explicit mapping by device_ids when provided
+        const norm = (v: any) => (v ?? '').toString().toLowerCase()
+        const extractIdCandidates = (x: any): string[] => {
+          if (x == null) return []
+          const value = typeof x === 'object' ? [x.hostid, x.device_id, x.name, x.id, x._id] : [x]
+          return value.filter(Boolean).map(norm)
+        }
+        const explicitDevices: any[] = Array.isArray(office?.device_ids) && office!.device_ids!.length > 0
+          ? data.hosts.filter((d: any) => {
+              const hostCandidates = [d.hostid, d.device_id, d.name].filter(Boolean).map(norm)
+              const officeIdPool = office!.device_ids!.flatMap(extractIdCandidates)
+              return officeIdPool.some((oid) => hostCandidates.includes(oid))
+            })
+          : []
+
+        // Fallback: robust location-based match
+        const inferredDevices = data.hosts.filter((device: any) => deviceBelongsToOffice(device, office))
+
+        // Merge and dedupe by hostid
+        const merged = [...explicitDevices, ...inferredDevices]
+        const seen = new Set<string>()
+        const officeDevices = merged.filter((d: any) => {
+          const key = (d.hostid ?? d.device_id)?.toString()
+          if (!key) return false
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
         setDevices(officeDevices)
         
         // Calculate device statistics
@@ -426,276 +490,137 @@ export default function OfficeDetailsPage() {
 
   // Visual Architecture Component
   const NetworkArchitecture = () => {
-    // Get total interfaces from all devices
-    const totalInterfaces = devices.reduce((sum, device) => sum + (device.interface_count || 0), 0)
-    
-    // Function to get interface status and color
-    const getInterfaceStatus = (interfaceName: string) => {
-      // Check if we have devices connected
-      if (devices.length === 0) {
-        return { status: 'unknown', color: 'gray' }
-      }
-      
-      // For Fa0/0 - connected to Zabbix server (should be up)
-      if (interfaceName === 'Fa0/0') {
-        return { status: 'up', color: 'green' }
-      }
-      
-      // For Fa0/1 - check if it has connected devices or is idle
-      if (interfaceName === 'Fa0/1') {
-        // Check if there are devices that would be connected to Fa0/1
-        // This could be switches, PCs, or other network devices
-        const hasConnectedDevices = devices.some(device => 
-          device.interface_count && device.interface_count > 1 // More than just Fa0/0
-        )
-        
-        if (hasConnectedDevices) {
-          return { status: 'up', color: 'green' }
-        } else {
-          return { status: 'idle', color: 'blue' }
-        }
-      }
-      
-      // For other interfaces, check if they have connected devices
-      const hasConnectedDevices = devices.some(device => 
-        device.interface_count && device.interface_count > 0
-      )
-      
-      if (hasConnectedDevices) {
-        return { status: 'up', color: 'green' }
-      } else {
-        return { status: 'idle', color: 'blue' }
-      }
-    }
-    
-    // Get interface colors based on status
-    const getInterfaceColor = (status: string) => {
-      switch (status) {
-        case 'up':
-          return 'from-green-400 to-green-600'
-        case 'down':
-          return 'from-red-400 to-red-600'
-        case 'idle':
-          return 'from-blue-400 to-blue-600'
-        case 'unknown':
-        default:
-          return 'from-gray-400 to-gray-600'
-      }
-    }
-    
+    // Use the devices state populated from /api/hosts/all
+    // Split devices by type for topology
+    const routerDevices = devices.filter(d => d.device_id.toLowerCase().includes('router') || d.device_id.toLowerCase().includes('r1'))
+    const switchDevices = devices.filter(d => d.device_id.toLowerCase().includes('switch') || d.device_id.toLowerCase().includes('s1'))
+    const endDevices = devices.filter(d => !routerDevices.includes(d) && !switchDevices.includes(d))
+
     return (
-      <div className="space-y-8">
+      <div className="glass-panel p-6" style={{ ['--glass-radius' as any]: '8px' }}>
         {/* Zabbix Server */}
         <div className="flex justify-center">
-          <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-3 rounded-lg flex items-center gap-2 shadow-lg">
-            <Server className="h-6 w-6" />
-            <div className="text-center">
-              <div className="font-medium text-lg">Zabbix Server</div>
-              <div className="text-sm opacity-90">
-                {zabbixServer ? zabbixServer.hostname || zabbixServer.name : 'Monitoring Server'}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Server Information */}
-        {zabbixServer && (
-          <div className="flex justify-center">
-            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 max-w-md">
-              <div className="text-sm space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Hostname:</span>
-                  <span className="font-mono">{zabbixServer.hostname}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Name:</span>
-                  <span className="font-mono">{zabbixServer.name}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Host ID:</span>
-                  <span className="font-mono">{zabbixServer.hostid}</span>
-                </div>
-                {zabbixServer.interfaces && zabbixServer.interfaces.length > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">IP Address:</span>
-                    <span className="font-mono">{zabbixServer.interfaces[0].ip || 'N/A'}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Connection Cable */}
-        <div className="flex justify-center">
-          <div className="relative">
-            {(() => {
-              const interfaceStatus = getInterfaceStatus('Fa0/0')
-              const colorClass = getInterfaceColor(interfaceStatus.status)
-              return (
-                <>
-                  <div className={`w-2 h-12 bg-gradient-to-b ${colorClass} rounded-full shadow-md`}></div>
-                  <div className="absolute -right-8 top-1/2 transform -translate-y-1/2 text-xs text-muted-foreground font-mono">
-                    Fa0/0
-                  </div>
-                </>
-              )
-            })()}
-          </div>
-        </div>
-
-        {/* Core Router with Interfaces */}
-        <div className="flex flex-col items-center space-y-4">
-          <div className="bg-gradient-to-r from-green-500 to-green-600 text-white px-8 py-4 rounded-lg flex items-center gap-3 shadow-lg">
-            <Wifi className="h-7 w-7" />
-            <div className="text-center">
-              <div className="font-medium text-lg">Core Router</div>
-              <div className="text-sm opacity-90">Cisco_R1</div>
-            </div>
-            <Badge variant="secondary" className="ml-2 bg-white/20 text-white">{deviceStats.routers}</Badge>
-          </div>
-          
-          {/* Router Interfaces - Show Fa0/1 (bottom interface) */}
-          {devices.filter(d => d.device_id.toLowerCase().includes('router') || d.device_id.toLowerCase().includes('r1')).map((router, index) => (
-            <div key={index} className="flex items-center gap-4">
-              {/* Show Fa0/1 interface (bottom interface) */}
-              <div className="flex flex-col items-center">
-                {(() => {
-                  const interfaceStatus = getInterfaceStatus('Fa0/1')
-                  const colorClass = getInterfaceColor(interfaceStatus.status)
-                  return (
-                    <>
-                      <div className={`w-16 h-1 bg-gradient-to-r ${colorClass} rounded-full shadow-sm`}></div>
-                      <div className="text-xs text-muted-foreground mt-1 font-mono">Fa0/1</div>
-                      <div className="text-xs text-muted-foreground mt-1 capitalize">{interfaceStatus.status}</div>
-                    </>
-                  )
-                })()}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Connection Cables */}
-        <div className="flex justify-center gap-8">
-          {Array.from({ length: Math.min(deviceStats.switches, 2) }, (_, i) => (
-            <div key={i} className="flex flex-col items-center">
-              <div className="w-1 h-16 bg-gradient-to-b from-green-500 to-orange-500 rounded-full shadow-md"></div>
-              <div className="text-xs text-muted-foreground mt-2 font-mono">Cable {i + 1}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Distribution Layer - Switches */}
-        <div className="flex justify-center gap-8">
-          {deviceStats.switches > 0 && (
-            <div className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-6 py-3 rounded-lg flex items-center gap-3 shadow-lg">
-              <Server className="h-6 w-6" />
+          <div className="glass-panel px-6 py-3 text-slate-100" style={{ ['--glass-radius' as any]: '8px' }}>
+            <div className="flex items-center gap-2">
+              <Server className="h-6 w-6 text-slate-200" />
               <div className="text-center">
-                <div className="font-medium">Switch</div>
-                <div className="text-sm opacity-90">Distribution</div>
+                <div className="font-medium text-lg">Zabbix Server</div>
+                <div className="text-sm text-slate-300">{zabbixServer ? zabbixServer.hostname || zabbixServer.name : 'Monitoring Server'}</div>
               </div>
-              <Badge variant="secondary" className="ml-2 bg-white/20 text-white">{deviceStats.switches}</Badge>
+            </div>
+          </div>
+        </div>
+
+        {/* Link to Core Routers (Fa0/0) */}
+        <div className="flex justify-center my-4">
+          <div className="relative flex flex-col items-center">
+            <div className="w-1 h-12 bg-green-500/80 rounded-full shadow-[0_0_12px_rgba(16,185,129,0.6)]" />
+            <span className="mt-1 text-xs font-mono text-slate-300">Fa0/0</span>
+          </div>
+        </div>
+
+        {/* Core Routers */}
+        <div className="flex justify-center gap-4 flex-wrap">
+          {routerDevices.length === 0 ? (
+            <div className="glass-panel px-5 py-3 text-slate-100" style={{ ['--glass-radius' as any]: '8px' }}>
+              <div className="flex items-center gap-2"><Wifi className="h-5 w-5" /><span>No Routers</span></div>
+            </div>
+          ) : routerDevices.map((r) => (
+            <div key={r.hostid} className="glass-panel px-5 py-3 text-slate-100 flex flex-col items-center gap-2" style={{ ['--glass-radius' as any]: '8px' }}>
+              <div className="flex items-center gap-2">
+                <Wifi className="h-5 w-5" />
+                <div className="text-sm">{r.device_id}</div>
+                <Badge className="ml-2">{r.interface_count || 0}</Badge>
+              </div>
+              {/* Dynamic interface badges and cables under router */}
+              <div className="flex flex-wrap gap-2 mt-2">
+                {(r.interfaces ?? []).map((iface: DynamicInterface, idx: number) => {
+                  let color = 'bg-gray-500';
+                  if (iface.status === 'Up') color = 'bg-green-500';
+                  else if (iface.status === 'Down') color = 'bg-red-500';
+                  else if (iface.status === 'Idle') color = 'bg-blue-500';
+                  else if (iface.status === 'Unknown') color = 'bg-gray-500';
+                  return (
+                    <div key={idx} className="flex flex-col items-center">
+                      <div className={`w-8 h-1 rounded-full ${color}`} />
+                      <span className="text-slate-300 font-mono">{iface.name || iface.ifdescr || `if${iface.ifindex}`}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Links to Switches (Fa0/1 cables) */}
+        <div className="flex justify-center my-4 gap-6">
+          {switchDevices.length > 0 ? (
+            switchDevices.map((_, i) => (
+              <div key={i} className="flex flex-col items-center">
+                <div className="w-12 h-1 bg-green-500/80 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                <span className="mt-1 text-[10px] font-mono text-slate-300">Fa0/1</span>
+              </div>
+            ))
+          ) : (
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-1 bg-green-500/80 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+              <span className="mt-1 text-[10px] font-mono text-slate-300">Fa0/1</span>
             </div>
           )}
         </div>
 
-        {/* Switch Interfaces */}
-        {deviceStats.switches > 0 && (
-          <div className="flex justify-center">
-            <div className="flex items-center gap-2">
-              {Array.from({ length: Math.min(totalInterfaces, 8) }, (_, i) => (
-                <div key={i} className="flex flex-col items-center">
-                  <div className="w-12 h-1 bg-gradient-to-r from-orange-400 to-orange-600 rounded-full shadow-sm"></div>
-                  <div className="text-xs text-muted-foreground mt-1 font-mono">Port {i + 1}</div>
-                </div>
-              ))}
-            </div>
+        {/* Distribution Switches */}
+        {switchDevices.length > 0 && (
+          <div className="flex justify-center gap-4 flex-wrap">
+            {switchDevices.map((s) => (
+              <div key={s.hostid} className="glass-panel px-5 py-3 text-slate-100 flex items-center gap-2" style={{ ['--glass-radius' as any]: '8px' }}>
+                <Server className="h-5 w-5" />
+                <div className="text-sm">{s.device_id}</div>
+                <Badge className="ml-2">{s.interface_count || 0}</Badge>
+              </div>
+            ))}
           </div>
         )}
 
-        {/* Connection Cables to End Devices */}
-        <div className="flex justify-center gap-4">
-          {Array.from({ length: Math.min(deviceStats.pcs + deviceStats.other, 6) }, (_, i) => (
-            <div key={i} className="flex flex-col items-center">
-              <div className="w-1 h-12 bg-gradient-to-b from-orange-500 to-purple-500 rounded-full shadow-md"></div>
-              <div className="text-xs text-muted-foreground mt-1 font-mono">Cable</div>
-            </div>
-          ))}
-        </div>
+        {/* Links to End Devices */}
+        {endDevices.length > 0 && (
+          <div className="flex justify-center my-4 gap-6">
+            {endDevices.map((_, i) => (
+              <div key={i} className="w-10 h-1 bg-white/15 rounded-full" />
+            ))}
+          </div>
+        )}
 
         {/* Access Layer - End Devices */}
-        <div className="flex justify-center gap-6">
-          {deviceStats.pcs > 0 && (
-            <div className="bg-gradient-to-r from-purple-500 to-purple-600 text-white px-4 py-3 rounded-lg flex items-center gap-2 shadow-lg">
-              <Monitor className="h-5 w-5" />
-              <div className="text-center">
-                <div className="font-medium">PCs</div>
-                <div className="text-sm opacity-90">Workstations</div>
+        {endDevices.length > 0 && (
+          <div className="flex justify-center gap-4 flex-wrap">
+            {endDevices.map((d) => (
+              <div key={d.hostid} className="glass-panel px-4 py-2 text-slate-100 flex items-center gap-2" style={{ ['--glass-radius' as any]: '8px' }}>
+                <Monitor className="h-4 w-4" />
+                <div className="text-sm">{d.device_id}</div>
               </div>
-              <Badge variant="secondary" className="ml-2 bg-white/20 text-white text-xs">{deviceStats.pcs}</Badge>
-            </div>
-          )}
-          {deviceStats.other > 0 && (
-            <div className="bg-gradient-to-r from-gray-500 to-gray-600 text-white px-4 py-3 rounded-lg flex items-center gap-2 shadow-lg">
-              <HardDrive className="h-5 w-5" />
-              <div className="text-center">
-                <div className="font-medium">Other</div>
-                <div className="text-sm opacity-90">Devices</div>
-              </div>
-              <Badge variant="secondary" className="ml-2 bg-white/20 text-white text-xs">{deviceStats.other}</Badge>
-            </div>
-          )}
-        </div>
+            ))}
+          </div>
+        )}
 
-        {/* Interface Status Legend */}
-        <div className="mt-8 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-          <div className="text-center">
-            <h3 className="font-semibold text-lg mb-4">Interface Status Legend</h3>
-            <div className="flex justify-center gap-6 text-sm">
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-1 bg-gradient-to-r from-green-400 to-green-600 rounded-full"></div>
-                <span className="text-green-600 font-medium">Up - Connected</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-1 bg-gradient-to-r from-red-400 to-red-600 rounded-full"></div>
-                <span className="text-red-600 font-medium">Down - Disconnected</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-1 bg-gradient-to-r from-blue-400 to-blue-600 rounded-full"></div>
-                <span className="text-blue-600 font-medium">Idle - No Activity</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-1 bg-gradient-to-r from-gray-400 to-gray-600 rounded-full"></div>
-                <span className="text-gray-600 font-medium">Unknown - No Data</span>
-              </div>
+        {/* Legend & Summary */}
+        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="glass-panel p-4" style={{ ['--glass-radius' as any]: '8px' }}>
+            <h3 className="font-semibold text-slate-100 mb-3 text-center">Interface Status Legend</h3>
+            <div className="flex justify-center gap-6 text-sm text-slate-300">
+              <div className="flex items-center gap-2"><div className="w-4 h-1 bg-green-500 rounded-full" />Up</div>
+              <div className="flex items-center gap-2"><div className="w-4 h-1 bg-red-500 rounded-full" />Down</div>
+              <div className="flex items-center gap-2"><div className="w-4 h-1 bg-blue-500 rounded-full" />Idle</div>
+              <div className="flex items-center gap-2"><div className="w-4 h-1 bg-gray-500 rounded-full" />Unknown</div>
             </div>
           </div>
-        </div>
-
-        {/* Network Summary */}
-        <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-          <div className="text-center">
-            <h3 className="font-semibold text-lg mb-2">Network Summary</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div>
-                <div className="font-medium text-blue-600">Total Devices</div>
-                <div className="text-2xl font-bold">{deviceStats.total}</div>
-              </div>
-              <div>
-                <div className="font-medium text-green-600">Total Interfaces</div>
-                <div className="text-2xl font-bold">{totalInterfaces}</div>
-              </div>
-              <div>
-                <div className="font-medium text-orange-600">Active Connections</div>
-                <div className="text-2xl font-bold">{deviceStats.online}</div>
-              </div>
-              <div>
-                <div className="font-medium text-purple-600">Network Health</div>
-                <div className="text-2xl font-bold text-green-600">
-                  {deviceStats.total > 0 ? Math.round(((deviceStats.online / deviceStats.total) * 100)) : 0}%
-                </div>
-              </div>
+          <div className="glass-panel p-4" style={{ ['--glass-radius' as any]: '8px' }}>
+            <h3 className="font-semibold text-slate-100 mb-3 text-center">Network Summary</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-slate-300">
+              <div className="text-center"><div className="font-medium">Total Devices</div><div className="text-2xl font-bold text-slate-100">{deviceStats.total}</div></div>
+              <div className="text-center"><div className="font-medium">Routers</div><div className="text-2xl font-bold text-slate-100">{routerDevices.length}</div></div>
+              <div className="text-center"><div className="font-medium">Switches</div><div className="text-2xl font-bold text-slate-100">{switchDevices.length}</div></div>
+              <div className="text-center"><div className="font-medium">End Devices</div><div className="text-2xl font-bold text-slate-100">{endDevices.length}</div></div>
             </div>
           </div>
         </div>
@@ -723,29 +648,28 @@ export default function OfficeDetailsPage() {
     )
   }
 
-  return (
+  const pageContent = (
     <main className="mx-auto max-w-7xl p-6 space-y-8">
-      {/* Header Section */}
-      <header className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-700 p-8 text-white">
-        <div className="absolute inset-0 bg-black/20"></div>
-        <div className="relative z-10">
+      {/* Header Section - Glass theme */}
+      <header>
+        <div className="glass-panel p-6 md:p-8" style={{ ['--glass-radius' as any]: '0px' }}>
           <div className="flex items-center gap-4 mb-6">
             <BackButton />
           </div>
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-4xl font-bold flex items-center gap-3 mb-2">
-                <Building className="h-8 w-8" />
+              <h1 className="text-3xl font-bold flex items-center gap-3 mb-2 text-slate-100">
+                <Building className="h-7 w-7 text-slate-200" />
                 {office.office}
               </h1>
-              <p className="text-xl text-blue-100 mb-4">
+              <p className="text-sm text-slate-300 mb-4">
                 {office.city}, {office.country}
               </p>
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-6">
+                <div className="flex items-center gap-6 text-slate-200">
                   <div className="flex items-center gap-2">
                     <Activity className="h-5 w-5" />
-                    <span className="text-lg font-semibold">{deviceStats.total} Devices</span>
+                    <span className="text-sm font-semibold">{deviceStats.total} Devices</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <MapPin className="h-5 w-5" />
@@ -753,17 +677,15 @@ export default function OfficeDetailsPage() {
                       lat={office.geo.lat} 
                       lon={office.geo.lon} 
                       inline={true}
-                      className="text-lg"
+                      className="text-sm"
                     />
                   </div>
                   {getStatusBadge(office.status)}
                 </div>
-                
-                {/* Office Health Chart */}
-                <div className="flex items-center gap-4">
+                {/* <div className="flex items-center gap-4">
                   <div className="text-right">
-                    <div className="text-sm text-blue-100">Office Health</div>
-                    <div className="text-xs text-blue-200">
+                    <div className="text-xs text-slate-300">Office Health</div>
+                    <div className="text-[11px] text-slate-400">
                       {deviceStats.healthy} healthy • {deviceStats.warning} warning • {deviceStats.critical} critical
                     </div>
                   </div>
@@ -773,19 +695,19 @@ export default function OfficeDetailsPage() {
                     size="lg"
                     showDetails={false}
                   />
-                </div>
+                </div> */}
               </div>
             </div>
             <div className="flex items-center gap-3">
               {!editing ? (
                 <>
-                  <Button variant="secondary" onClick={handleEdit} className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white border-white/30">
+                  <Button variant="secondary" onClick={handleEdit} className="btn-glass flex items-center gap-2">
                     <Edit className="h-4 w-4" />
                     Edit
                   </Button>
                   <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
                     <AlertDialogTrigger asChild>
-                      <Button variant="destructive" className="flex items-center gap-2 bg-red-500/20 hover:bg-red-500/30 text-white border-red-500/30">
+                      <Button variant="destructive" className="btn-glass flex items-center gap-2">
                         <Trash2 className="h-4 w-4" />
                         Delete
                       </Button>
@@ -808,11 +730,11 @@ export default function OfficeDetailsPage() {
                 </>
               ) : (
                 <>
-                  <Button variant="outline" onClick={handleCancelEdit} className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white border-white/30">
+                  <Button variant="outline" onClick={handleCancelEdit} className="btn-glass flex items-center gap-2">
                     <X className="h-4 w-4" />
                     Cancel
                   </Button>
-                  <Button onClick={handleSaveEdit} className="flex items-center gap-2 bg-green-500/20 hover:bg-green-500/30 text-white border-green-500/30">
+                  <Button onClick={handleSaveEdit} className="btn-glass flex items-center gap-2">
                     <Save className="h-4 w-4" />
                     Save
                   </Button>
@@ -825,43 +747,43 @@ export default function OfficeDetailsPage() {
 
       {/* Key Metrics Dashboard */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950 dark:to-blue-900 border-blue-200 dark:border-blue-800">
+        <Card className="glass-panel">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-blue-600 dark:text-blue-400">Total Devices</p>
-                <p className="text-3xl font-bold text-blue-900 dark:text-blue-100">{deviceStats.total}</p>
+                <p className="text-sm font-medium text-slate-300">Total Devices</p>
+                <p className="text-3xl font-bold text-slate-100">{deviceStats.total}</p>
               </div>
-              <div className="p-3 bg-blue-500 rounded-full">
+              <div className="p-3 bg-blue-500/30 rounded-full">
                 <Server className="h-6 w-6 text-white" />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950 dark:to-green-900 border-green-200 dark:border-green-800">
+        <Card className="glass-panel">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-green-600 dark:text-green-400">Online Devices</p>
-                <p className="text-3xl font-bold text-green-900 dark:text-green-100">{deviceStats.online}</p>
+                <p className="text-sm font-medium text-slate-300">Online Devices</p>
+                <p className="text-3xl font-bold text-slate-100">{deviceStats.online}</p>
               </div>
-              <div className="p-3 bg-green-500 rounded-full">
+              <div className="p-3 bg-green-500/30 rounded-full">
                 <CheckCircle className="h-6 w-6 text-white" />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-950 dark:to-orange-900 border-orange-200 dark:border-orange-800">
+        <Card className="glass-panel">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-orange-600 dark:text-orange-400">Warnings</p>
-                <p className="text-3xl font-bold text-orange-900 dark:text-orange-100">{deviceStats.warning}</p>
+                <p className="text-sm font-medium text-slate-300">Warnings</p>
+                <p className="text-3xl font-bold text-slate-100">{deviceStats.warning}</p>
               </div>
               <div className="flex items-center gap-2">
-                <div className="p-3 bg-orange-500 rounded-full">
+                <div className="p-3 bg-orange-500/30 rounded-full">
                   <AlertTriangle className="h-6 w-6 text-white" />
                 </div>
                 {deviceStats.warning > 0 && (
@@ -883,15 +805,15 @@ export default function OfficeDetailsPage() {
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-red-50 to-red-100 dark:from-red-950 dark:to-red-900 border-red-200 dark:border-red-800">
+        <Card className="glass-panel">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-red-600 dark:text-red-400">Critical Issues</p>
-                <p className="text-3xl font-bold text-red-900 dark:text-red-100">{deviceStats.critical}</p>
+                <p className="text-sm font-medium text-slate-300">Critical Issues</p>
+                <p className="text-3xl font-bold text-slate-100">{deviceStats.critical}</p>
               </div>
               <div className="flex items-center gap-2">
-                <div className="p-3 bg-red-500 rounded-full">
+                <div className="p-3 bg-red-500/30 rounded-full">
                   <AlertTriangle className="h-6 w-6 text-white" />
                 </div>
                 {deviceStats.critical > 0 && (
@@ -916,24 +838,24 @@ export default function OfficeDetailsPage() {
 
       {/* Main Content Tabs */}
       <Tabs defaultValue="overview" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="overview" className="flex items-center gap-2">
+        <TabsList className="glass-panel grid w-full grid-cols-5" style={{ ['--glass-radius' as any]: '8px' }}>
+          <TabsTrigger value="overview" className="flex items-center gap-2 text-slate-200 data-[state=active]:bg-white/10 data-[state=active]:text-slate-100">
             <BarChart3 className="h-4 w-4" />
             Overview
           </TabsTrigger>
-          <TabsTrigger value="health" className="flex items-center gap-2">
+          <TabsTrigger value="health" className="flex items-center gap-2 text-slate-200 data-[state=active]:bg-white/10 data-[state=active]:text-slate-100">
             <Activity className="h-4 w-4" />
             Health
           </TabsTrigger>
-          <TabsTrigger value="devices" className="flex items-center gap-2">
+          <TabsTrigger value="devices" className="flex items-center gap-2 text-slate-200 data-[state=active]:bg-white/10 data-[state=active]:text-slate-100">
             <Server className="h-4 w-4" />
             Devices ({devices.length})
           </TabsTrigger>
-          <TabsTrigger value="architecture" className="flex items-center gap-2">
+          <TabsTrigger value="architecture" className="flex items-center gap-2 text-slate-200 data-[state=active]:bg-white/10 data-[state=active]:text-slate-100">
             <Network className="h-4 w-4" />
             Architecture
           </TabsTrigger>
-          <TabsTrigger value="settings" className="flex items-center gap-2">
+          <TabsTrigger value="settings" className="flex items-center gap-2 text-slate-200 data-[state=active]:bg-white/10 data-[state=active]:text-slate-100">
             <Settings className="h-4 w-4" />
             Settings
           </TabsTrigger>
@@ -942,13 +864,13 @@ export default function OfficeDetailsPage() {
         <TabsContent value="overview" className="space-y-6">
           <div className="grid gap-6 lg:grid-cols-3">
             {/* Device Distribution Pie Chart */}
-            <Card className="lg:col-span-1">
+            <Card className="glass-panel lg:col-span-1" style={{ ['--glass-radius' as any]: '8px' }}>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <PieChart className="h-5 w-5 text-blue-600" />
-                  Device Distribution
+                  <PieChart className="h-5 w-5 text-slate-200" />
+                  <span className="text-slate-100">Device Distribution</span>
                 </CardTitle>
-                <CardDescription>Breakdown by device type</CardDescription>
+                <CardDescription className="text-slate-300">Breakdown by device type</CardDescription>
               </CardHeader>
               <CardContent>
                 <DeviceDistributionPieChart />
@@ -959,10 +881,10 @@ export default function OfficeDetailsPage() {
                     { label: 'PCs', value: deviceStats.pcs, color: '#F59E0B', icon: Monitor },
                     { label: 'Other', value: deviceStats.other, color: '#8B5CF6', icon: HardDrive }
                   ].filter(item => item.value > 0).map((item, index) => (
-                    <div key={index} className="flex items-center justify-between">
+                    <div key={index} className="flex items-center justify-between text-slate-200">
                       <div className="flex items-center gap-2">
                         <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }}></div>
-                        <item.icon className="h-4 w-4 text-muted-foreground" />
+                        <item.icon className="h-4 w-4 text-slate-300" />
                         <span className="text-sm font-medium">{item.label}</span>
                       </div>
                       <span className="text-sm font-bold">{item.value}</span>
@@ -973,11 +895,11 @@ export default function OfficeDetailsPage() {
             </Card>
 
             {/* Office Information & Contact */}
-            <Card className="lg:col-span-2">
+            <Card className="glass-panel lg:col-span-2" style={{ ['--glass-radius' as any]: '8px' }}>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Building className="h-5 w-5 text-green-600" />
-                  Office Information
+                  <Building className="h-5 w-5 text-slate-200" />
+                  <span className="text-slate-100">Office Information</span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -1110,28 +1032,28 @@ export default function OfficeDetailsPage() {
           </div>
 
           {/* Location Details */}
-          <Card>
+          <Card className="glass-panel">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <MapPin className="h-5 w-5 text-purple-600" />
-                Location Details
+                <MapPin className="h-5 w-5 text-slate-200" />
+                <span className="text-slate-100">Location Details</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid gap-4 md:grid-cols-3">
-                <div className="p-4 bg-purple-50 dark:bg-purple-950 rounded-lg">
-                  <span className="text-sm font-medium text-purple-900 dark:text-purple-100">Coordinates</span>
-                  <p className="text-sm text-purple-700 dark:text-purple-300 mt-1">
+                <div className="p-4 glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
+                  <span className="text-sm font-medium text-slate-200">Coordinates</span>
+                  <p className="text-sm text-slate-300 mt-1">
                     {office.geo.lat.toFixed(6)}, {office.geo.lon.toFixed(6)}
                   </p>
                 </div>
-                <div className="p-4 bg-purple-50 dark:bg-purple-950 rounded-lg">
-                  <span className="text-sm font-medium text-purple-900 dark:text-purple-100">Source</span>
-                  <p className="text-sm text-purple-700 dark:text-purple-300 mt-1 capitalize">{office.geo.source}</p>
+                <div className="p-4 glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
+                  <span className="text-sm font-medium text-slate-200">Source</span>
+                  <p className="text-sm text-slate-300 mt-1 capitalize">{office.geo.source}</p>
                 </div>
-                <div className="p-4 bg-purple-50 dark:bg-purple-950 rounded-lg">
-                  <span className="text-sm font-medium text-purple-900 dark:text-purple-100">Last Updated</span>
-                  <p className="text-sm text-purple-700 dark:text-purple-300 mt-1">
+                <div className="p-4 glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
+                  <span className="text-sm font-medium text-slate-200">Last Updated</span>
+                  <p className="text-sm text-slate-300 mt-1">
                     {new Date(office.updated_at).toLocaleDateString()}
                   </p>
                 </div>
@@ -1142,13 +1064,13 @@ export default function OfficeDetailsPage() {
 
         <TabsContent value="health" className="space-y-6">
           {/* Comprehensive Health Dashboard */}
-          <div className="relative">
+          <div className="relative glass-panel p-4" style={{ ['--glass-radius' as any]: '8px' }}>
             <HealthDashboard 
               devices={devices} 
               officeName={`${office.office} Site Health`}
             />
             {/* AI Troubleshoot Button for Office Health */}
-            <div className="absolute top-4 right-4">
+            <div className="absolute top-9 right-43">
               <AITroubleshootModal
                 device={office.office}
                 metric="office.health.overall"
@@ -1165,14 +1087,14 @@ export default function OfficeDetailsPage() {
           </div>
           
           {/* Individual Device Health Monitors */}
-          <Card>
+          <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Activity className="h-5 w-5 text-blue-600" />
-                Individual Device Health Monitors
+                <Activity className="h-5 w-5 text-slate-200" />
+                <span className="text-slate-100">Individual Device Health Monitors</span>
               </CardTitle>
               <CardDescription>
-                Detailed health analysis for each device with SNMP metrics
+                <span className="text-slate-300">Detailed health analysis for each device with SNMP metrics</span>
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -1189,14 +1111,14 @@ export default function OfficeDetailsPage() {
           </Card>
           
           {/* Health Metrics Summary */}
-          <Card>
+          <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Activity className="h-5 w-5 text-green-600" />
-                Health Metrics Summary
+                <Activity className="h-5 w-5 text-slate-200" />
+                <span className="text-slate-100">Health Metrics Summary</span>
               </CardTitle>
               <CardDescription>
-                Comprehensive health monitoring based on SNMP metrics
+                <span className="text-slate-300">Comprehensive health monitoring based on SNMP metrics</span>
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -1246,15 +1168,15 @@ export default function OfficeDetailsPage() {
         </TabsContent>
 
         <TabsContent value="devices" className="space-y-6">
-          <Card>
+          <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="flex items-center gap-2">
-                    <Server className="h-5 w-5 text-blue-600" />
-                    Connected Devices
+                    <Server className="h-5 w-5 text-slate-200" />
+                    <span className="text-slate-100">Connected Devices</span>
                   </CardTitle>
-                  <CardDescription>
+                  <CardDescription className="text-slate-300">
                     Network devices associated with this office
                   </CardDescription>
                 </div>
@@ -1278,9 +1200,9 @@ export default function OfficeDetailsPage() {
                   {devices.map((device) => (
                     <div key={device.hostid} className="relative">
                       <Link href={`/devices/${device.hostid}`}>
-                        <Card className="hover:shadow-lg transition-all duration-200 border-l-4 border-l-blue-500 cursor-pointer">
+                        <Card className="glass-panel hover:shadow-lg transition-all duration-200 cursor-pointer" style={{ ['--glass-radius' as any]: '8px' }}>
                           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                            <CardTitle className="text-sm font-medium flex items-center gap-2">
+                            <CardTitle className="text-sm font-medium flex items-center gap-2 text-slate-100">
                               {getDeviceIcon(device.device_id)}
                               {device.device_id}
                             </CardTitle>
@@ -1308,21 +1230,21 @@ export default function OfficeDetailsPage() {
                               )}
                             </div>
                           </CardHeader>
-                          <CardContent className="space-y-3">
+                          <CardContent className="space-y-3 text-slate-300">
                             <div className="flex items-center justify-between text-xs">
-                              <span className="text-muted-foreground">Host ID:</span>
-                              <span className="font-mono">{device.hostid}</span>
+                              <span className="text-slate-400">Host ID:</span>
+                              <span className="font-mono text-slate-200">{device.hostid}</span>
                             </div>
                             <div className="flex items-center justify-between text-xs">
-                              <span className="text-muted-foreground">Interfaces:</span>
-                              <span className="font-semibold">{device.interface_count || 0}</span>
+                              <span className="text-slate-400">Interfaces:</span>
+                              <span className="font-semibold text-slate-200">{device.interface_count || 0}</span>
                             </div>
                             <div className="flex items-center justify-between text-xs">
-                              <span className="text-muted-foreground">Metrics:</span>
-                              <span className="font-semibold">{device.total_metrics || 0}</span>
+                              <span className="text-slate-400">Metrics:</span>
+                              <span className="font-semibold text-slate-200">{device.total_metrics || 0}</span>
                             </div>
                             <div className="pt-2 border-t">
-                              <p className="text-xs text-muted-foreground">
+                              <p className="text-xs text-slate-400">
                                 Last seen: {new Date(device.last_seen).toLocaleString()}
                               </p>
                             </div>
@@ -1333,12 +1255,10 @@ export default function OfficeDetailsPage() {
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-12">
-                  <Server className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">No Devices Found</h3>
-                  <p className="text-muted-foreground">
-                    No devices are currently associated with this office.
-                  </p>
+                <div className="text-center py-12 text-slate-300">
+                  <Server className="h-16 w-16 text-slate-400 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold mb-2 text-slate-100">No Devices Found</h3>
+                  <p className="text-slate-300">No devices are currently associated with this office.</p>
                 </div>
               )}
             </CardContent>
@@ -1346,15 +1266,15 @@ export default function OfficeDetailsPage() {
         </TabsContent>
 
         <TabsContent value="architecture" className="space-y-6">
-          <Card>
+          <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="flex items-center gap-2">
-                    <Network className="h-5 w-5 text-green-600" />
-                    Network Architecture
+                    <Network className="h-5 w-5 text-slate-200" />
+                    <span className="text-slate-100">Network Architecture</span>
                   </CardTitle>
-                  <CardDescription>
+                  <CardDescription className="text-slate-300">
                     Visual representation of the office network topology
                   </CardDescription>
                 </div>
@@ -1379,50 +1299,50 @@ export default function OfficeDetailsPage() {
 
           {/* Network Statistics */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <Card className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950 dark:to-blue-900">
+            <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-blue-600 dark:text-blue-400">Routers</p>
-                    <p className="text-2xl font-bold text-blue-900 dark:text-blue-100">{deviceStats.routers}</p>
+                    <p className="text-sm font-medium text-slate-300">Routers</p>
+                    <p className="text-2xl font-bold text-slate-100">{deviceStats.routers}</p>
                   </div>
-                  <Wifi className="h-8 w-8 text-blue-500" />
+                  <Wifi className="h-8 w-8 text-slate-200" />
                 </div>
               </CardContent>
             </Card>
 
-            <Card className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950 dark:to-green-900">
+            <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-green-600 dark:text-green-400">Switches</p>
-                    <p className="text-2xl font-bold text-green-900 dark:text-green-100">{deviceStats.switches}</p>
+                    <p className="text-sm font-medium text-slate-300">Switches</p>
+                    <p className="text-2xl font-bold text-slate-100">{deviceStats.switches}</p>
                   </div>
-                  <Server className="h-8 w-8 text-green-500" />
+                  <Server className="h-8 w-8 text-slate-200" />
                 </div>
               </CardContent>
             </Card>
 
-            <Card className="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-950 dark:to-orange-900">
+            <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-orange-600 dark:text-orange-400">PCs</p>
-                    <p className="text-2xl font-bold text-orange-900 dark:text-orange-100">{deviceStats.pcs}</p>
+                    <p className="text-sm font-medium text-slate-300">PCs</p>
+                    <p className="text-2xl font-bold text-slate-100">{deviceStats.pcs}</p>
                   </div>
-                  <Monitor className="h-8 w-8 text-orange-500" />
+                  <Monitor className="h-8 w-8 text-slate-200" />
                 </div>
               </CardContent>
             </Card>
 
-            <Card className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950 dark:to-purple-900">
+            <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-purple-600 dark:text-purple-400">Other</p>
-                    <p className="text-2xl font-bold text-purple-900 dark:text-purple-100">{deviceStats.other}</p>
+                    <p className="text-sm font-medium text-slate-300">Other</p>
+                    <p className="text-2xl font-bold text-slate-100">{deviceStats.other}</p>
                   </div>
-                  <HardDrive className="h-8 w-8 text-purple-500" />
+                  <HardDrive className="h-8 w-8 text-slate-200" />
                 </div>
               </CardContent>
             </Card>
@@ -1431,7 +1351,7 @@ export default function OfficeDetailsPage() {
 
         <TabsContent value="settings" className="space-y-6">
           <div className="grid gap-6 md:grid-cols-2">
-            <Card>
+            <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Settings className="h-5 w-5 text-purple-600" />
@@ -1489,7 +1409,7 @@ export default function OfficeDetailsPage() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Database className="h-5 w-5 text-blue-600" />
@@ -1537,4 +1457,5 @@ export default function OfficeDetailsPage() {
       </Tabs>
     </main>
   )
+  return pageContent
 }

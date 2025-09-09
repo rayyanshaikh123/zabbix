@@ -134,6 +134,44 @@ function getInterfaceStatusBadge(status: 'up' | 'down' | 'unknown') {
   return <Badge variant="secondary" className="flex items-center gap-1"><Clock className="h-3 w-3" />Unknown</Badge>;
 }
 
+// Calculate device health score based on metrics
+function calculateDeviceHealthScore(device: DeviceInfo): number {
+  let score = 100;
+  // CPU penalty
+  if (device.system_metrics?.cpu?.utilization !== undefined) {
+    if (device.system_metrics.cpu.utilization > 90) score -= 20;
+    else if (device.system_metrics.cpu.utilization > 80) score -= 10;
+  }
+  // Memory penalty
+  if (device.system_metrics?.memory?.utilization !== undefined) {
+    if (device.system_metrics.memory.utilization > 90) score -= 20;
+    else if (device.system_metrics.memory.utilization > 80) score -= 10;
+  }
+  // Interface penalty
+  const interfaceList = device.interfaces ? Object.values(device.interfaces) : [];
+  if (interfaceList.length > 0) {
+    const up = interfaceList.filter(iface => iface.status === 'Up').length;
+    const idle = interfaceList.filter(iface => iface.status === 'Idle').length;
+    const down = interfaceList.filter(iface => iface.status === 'Down').length;
+    score -= down * 20;
+    score -= idle * 10;
+    // If all interfaces are down, set score to 0
+    if (up === 0 && down > 0) score = 0;
+  }
+  // Temperature penalty
+  if (device.system_metrics?.hardware?.temperature !== undefined) {
+    if (device.system_metrics.hardware.temperature > 80) score -= 20;
+    else if (device.system_metrics.hardware.temperature > 70) score -= 10;
+  }
+  // Uptime penalty (frequent restarts)
+  if (device.system_info?.uptime_hardware !== undefined && device.system_info.uptime_hardware < 3600) {
+    score -= 20;
+  }
+  // Clamp score
+  score = Math.max(0, Math.min(100, score));
+  return score;
+}
+
 export default async function DeviceDetailsPage({ params }: { params: Promise<{ hostid: string }> }) {
   const { hostid } = await params;
   const deviceData = await getDeviceData(hostid);
@@ -164,7 +202,27 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
   const { device, alerts, rawMetrics = [] } = deviceData;
   const { device_id, device_name, device_type, location, geo, system_info, interfaces, system_metrics, last_seen } = device;
 
-  const interfaceList = interfaces ? Object.values(interfaces) : [];
+  const healthScore = calculateDeviceHealthScore(device);
+
+  // Filter and deduplicate interfaces
+  const interfaceListRaw = interfaces ? Object.values(interfaces) : [];
+  const validIfaces = interfaceListRaw.filter(iface => iface.name && iface.name !== 'Other' && iface.status !== 'Unknown');
+  let interfaceList: typeof interfaceListRaw = [];
+  if (validIfaces.length > 0) {
+    // Only show valid interfaces
+    const ifaceMap = new Map<string, typeof validIfaces[0]>();
+    validIfaces.forEach(iface => {
+      if (!ifaceMap.has(iface.name)) {
+        ifaceMap.set(iface.name, iface);
+      }
+    });
+    interfaceList = Array.from(ifaceMap.values());
+  } else {
+    // If no valid interfaces, show one 'Unknown' or 'Other' entry if present
+    const unknownIface = interfaceListRaw.find(iface => iface.status === 'Unknown' || iface.name === 'Other');
+    if (unknownIface) interfaceList = [unknownIface];
+  }
+  const interfaceCount = interfaceList.length;
   const upInterfaces = interfaceList.filter(iface => iface.status === 'Up').length;
   const downInterfaces = interfaceList.filter(iface => iface.status === 'Down').length;
 
@@ -194,18 +252,18 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
 
       {/* Device Overview Cards */}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
-        <Card>
+        <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Interfaces</CardTitle>
             <Network className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{interfaceList.length}</div>
+            <div className="text-2xl font-bold">{interfaceCount}</div>
             <p className="text-xs text-muted-foreground">Monitored interfaces</p>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="glass-panel p-4  " style={{ ['--glass-radius' as any]: '8px' }}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Interface Status</CardTitle>
             <CheckCircle className="h-4 w-4 text-green-600" />
@@ -216,7 +274,7 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">CPU Utilization</CardTitle>
             <Cpu className="h-4 w-4 text-muted-foreground" />
@@ -229,7 +287,7 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="glass-panel p-4" style={{ ['--glass-radius' as any]: '8px' }}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Memory Usage</CardTitle>
             <MemoryStick className="h-4 w-4 text-muted-foreground" />
@@ -257,7 +315,7 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
         <TabsContent value="overview" className="mt-6">
           <div className="grid gap-6 lg:grid-cols-2">
             {/* System Information */}
-            <Card>
+            <Card className="glass-panel p-4" style={{ ['--glass-radius' as any]: '8px' }}>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Info className="h-5 w-5" />
@@ -291,7 +349,7 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
             </Card>
 
             {/* Hardware Status */}
-            <Card>
+            <Card className="glass-panel p-4" style={{ ['--glass-radius' as any]: '8px' }}>
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="flex items-center gap-2">
@@ -351,7 +409,7 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
         <TabsContent value="health" className="mt-6">
           <div className="space-y-6">
             {/* Device Health Overview */}
-            <Card>
+            <Card className="glass-panel p-4" style={{ ['--glass-radius' as any]: '8px' }}>
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div>
@@ -380,8 +438,8 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
               <CardContent>
                 <div className="flex items-center justify-center">
                   <CircularHealthChart 
-                    healthScore={85} // This should be calculated based on actual device metrics
-                    status="good"
+                    healthScore={healthScore}
+                    status={healthScore >= 90 ? 'excellent' : healthScore >= 75 ? 'good' : healthScore >= 50 ? 'warning' : 'critical'}
                     size="xl"
                     showDetails={true}
                   />
@@ -398,7 +456,7 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
         </TabsContent>
 
         <TabsContent value="interfaces" className="mt-6">
-          <Card>
+          <Card className="glass-panel p-4" style={{ ['--glass-radius' as any]: '8px' }}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
@@ -423,7 +481,7 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
               <div className="space-y-4">
                 {interfaceList.length > 0 ? (
                   interfaceList.map((iface, index) => (
-                    <div key={index} className="border p-4 rounded-lg">
+                    <div key={index} className="glass-panel p-4"  style={{ ['--glass-radius' as any]: '8px' }}>
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-2">
                           <Network className="h-4 w-4 text-blue-500" />
@@ -436,7 +494,7 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
                           <div className="text-sm text-muted-foreground">
                             Last seen: {new Date(iface.last_seen).toLocaleString()}
                           </div>
-                          {(iface.status === 'Down' || iface.traffic.errors_in > 0 || iface.traffic.errors_out > 0) && (
+                          {(iface.status === 'Down' || iface.traffic.errors_in > 0 || iface.traffic.errors_out > 0) && iface.traffic.errors_in !== undefined && iface.traffic.errors_out !== undefined && iface.traffic.errors_in !== null && iface.traffic.errors_out !== null && (
                             <AITroubleshootModal
                               device={device_name}
                               metric={`interface.${iface.name}.status`}
@@ -509,7 +567,7 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
         <TabsContent value="system" className="mt-6">
           <div className="grid gap-6 lg:grid-cols-2">
             {/* Memory Information */}
-            <Card>
+            <Card className="glass-panel p-4" style={{ ['--glass-radius' as any]: '8px' }}>
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="flex items-center gap-2">
@@ -558,7 +616,7 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
             </Card>
 
             {/* Uptime Information */}
-            <Card>
+            <Card className="glass-panel p-4" style={{ ['--glass-radius' as any]: '8px' }}>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Clock className="h-5 w-5" />
@@ -584,7 +642,7 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
         </TabsContent>
 
         <TabsContent value="metrics" className="mt-6">
-          <Card>
+          <Card className="glass-panel p-4" style={{ ['--glass-radius' as any]: '8px' }}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
@@ -615,7 +673,7 @@ export default async function DeviceDetailsPage({ params }: { params: Promise<{ 
                 <div className="space-y-4">
                   {rawMetrics.length > 0 ? (
                     rawMetrics.map((metric, index) => (
-                      <div key={index} className="border p-4 rounded-lg">
+                      <div key={index} className="glass-panel p-4" style={{ ['--glass-radius' as any]: '8px' }}>
                         <div className="flex items-center justify-between mb-2">
                           <h4 className="font-medium text-sm">{metric.metric}</h4>
                           <div className="flex items-center gap-2">

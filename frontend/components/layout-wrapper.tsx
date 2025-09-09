@@ -12,7 +12,13 @@ export function LayoutWrapper({ children }: LayoutWrapperProps) {
   const isAuthPage = pathname.startsWith('/auth')
 
   return (
-    <div className="min-h-dvh md:flex md:flex-row bg-background">
+    <div className="min-h-dvh md:flex md:flex-row relative">
+      {/* Full-screen gradient background */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 -z-10"
+        style={{ background: "var(--bg-gradient, #03070d)" }}
+      />
       {/* Sidebar - only show if not on auth pages */}
       {!isAuthPage && (
         <div className="md:w-64 md:shrink-0">
@@ -22,11 +28,6 @@ export function LayoutWrapper({ children }: LayoutWrapperProps) {
 
       {/* Main content */}
       <div className={isAuthPage ? "flex-1" : "flex-1"}>
-        {!isAuthPage && (
-          <header className="hidden md:flex sticky top-0 z-40 h-14 items-center justify-between border-b px-6 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-            <h1 className="text-sm font-semibold text-balance">Network Health Dashboard</h1>
-          </header>
-        )}
         <main className={isAuthPage ? "" : "p-4 md:p-6"}>
           {children}
         </main>

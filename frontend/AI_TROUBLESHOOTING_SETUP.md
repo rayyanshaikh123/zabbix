@@ -12,20 +12,20 @@ The AI-powered troubleshooting feature provides intelligent solutions for networ
 
 ## Setup Instructions
 
-### 1. Hugging Face API Key
+### 1. Gemini API Key
 
-1. Go to [Hugging Face Settings](https://huggingface.co/settings/tokens)
+1. Go to [Gemini Settings]
 2. Create a new API token
 3. Add it to your environment variables:
 
 ```bash
 # In your .env.local file
-HUGGINGFACE_API_KEY=your_huggingface_api_key_here
+GEMINI_API_KEY
 ```
 
 ### 2. Fallback System
 
-If the Hugging Face API is unavailable or fails, the system automatically falls back to a rule-based troubleshooting system that provides solutions for common network issues.
+If the Gemini API is unavailable or fails, the system automatically falls back to a rule-based troubleshooting system that provides solutions for common network issues.
 
 ## How It Works
 

@@ -17,10 +17,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="antialiased">
-      <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`}>
+    <html lang="en" className="antialiased h-full" suppressHydrationWarning>
+      <body className={`min-h-screen h-full font-sans ${GeistSans.variable} ${GeistMono.variable}`} style={{ background: "var(--bg-gradient, #0b1220)" }}>
         <SessionProvider>
-          <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+          <ThemeProvider attribute="class" defaultTheme="system" enableSystem={true}>
             <Suspense fallback={<div>Loading...</div>}>
               <LayoutWrapper>
                 {children}
@@ -29,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {/* <Analytics /> */}
           </ThemeProvider>
         </SessionProvider>
+    
       </body>
     </html>
   )

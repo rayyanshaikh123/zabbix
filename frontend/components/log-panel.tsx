@@ -85,7 +85,7 @@ export function LogPanel({ deviceFilter }: { deviceFilter?: string }) {
   }, [data?.logs])
 
   return (
-    <Card>
+    <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
       <CardHeader className="flex flex-row items-center justify-between">
         <div>
           <CardTitle className="text-balance">Agent Logs & Troubleshooting</CardTitle>

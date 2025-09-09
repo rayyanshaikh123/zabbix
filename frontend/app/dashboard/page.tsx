@@ -9,6 +9,10 @@ import { HealthChart } from "@/components/charts/health-chart"
 import { LocationMapWrapper } from "@/components/map/location-map-wrapper"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { LeafletMap } from "@/components/leaflet-map"
+import { Plus_Jakarta_Sans, Inter } from "next/font/google"
+
+const titleFont = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["700", "800"] })
+const bodyFont = Inter({ subsets: ["latin"], weight: ["400", "500", "600"] })
 
 interface Host {
   hostid: string;
@@ -175,6 +179,27 @@ export default async function DashboardPage() {
   const operationalHosts = hosts.filter(host => host.status === 'active' || host.severity === 'info' || !host.severity).length;
   const totalInterfaces = hosts.reduce((sum, host) => sum + (host.interface_count || 0), 0);
 
+  // Compute live device counts per office by matching hosts -> offices
+  const normalize = (val?: string) => (val || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '')
+  const belongsToOffice = (device: any, office: any): boolean => {
+    if (!device || !office) return false
+    const deviceLoc = normalize((device as any).location)
+    const candidates = [office.office, office._id, `${office.city}-${office.office}`, `${office.country}-${office.city}-${office.office}`]
+      .filter(Boolean).map(normalize)
+    const idMatch = Array.isArray(office.device_ids) && office.device_ids.some((x: any) => {
+      const n = normalize(typeof x === 'object' ? (x.hostid || x.device_id || x) : x)
+      const hostCandidates = [(device as any).hostid, (device as any).device_id, (device as any).name].filter(Boolean).map(normalize)
+      return hostCandidates.includes(n)
+    })
+    return idMatch || candidates.some((c: string) => deviceLoc === c || deviceLoc.includes(c))
+  }
+
+  const officeDeviceCounts: Record<string, number> = offices.reduce((acc: Record<string, number>, office: any) => {
+    acc[office._id] = hosts.filter((h: any) => belongsToOffice(h, office)).length
+    return acc
+  }, {})
+  const totalDevicesAcrossOffices = Object.values(officeDeviceCounts).reduce((a, b) => a + b, 0)
+
   // Get unique metrics for system overview
   const uniqueMetrics = [...new Set(metrics.map(m => m.metric))].length;
   const recentMetrics = metrics.slice(0, 10);
@@ -260,26 +285,28 @@ export default async function DashboardPage() {
   ];
 
   return (
-    <main className="mx-auto max-w-7xl p-6">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold text-balance">Network Monitoring Dashboard</h1>
-        <p className="text-sm text-muted-foreground">Global overview of network device health and performance.</p>
-        {hasConnectionError && (
-          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <h3 className="text-red-800 font-medium">Database Connection Issue</h3>
-            <p className="text-red-600 text-sm mt-1">
-              {hostsData.error || alertsData.error || metricsData.error || locationsData.error}
-            </p>
-            <p className="text-red-600 text-sm mt-2">
-              Make sure MongoDB is configured correctly and the monitoring agent is running.
-            </p>
-          </div>
-        )}
+    <main className={`${bodyFont.className} mx-auto max-w-7xl p-6 lg:p-8`} >
+      <header className="mb-8 glass-panel" style={{ ['--glass-radius' as any]: '0' }}>
+        <div className=" p-6 md:p-8">
+          <h1 className={`${titleFont.className} text-3xl md:text-4xl text-slate-100`}>Network Monitoring Dashboard</h1>
+          <p className="mt-2 text-sm md:text-base text-slate-300">Global overview of network device health and performance.</p>
+          {hasConnectionError && (
+            <div className="mt-4 p-4 rounded-lg border border-red-400/40 bg-red-900/20 text-red-200">
+              <h3 className="font-medium">Database Connection Issue</h3>
+              <p className="text-sm mt-1">
+                {hostsData.error || alertsData.error || metricsData.error || locationsData.error}
+              </p>
+              <p className="text-sm mt-2">
+                Make sure MongoDB is configured correctly and the monitoring agent is running.
+              </p>
+            </div>
+          )}
+        </div>
       </header>
 
       {/* Global Health Overview Cards */}
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
-        <Card>
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-8">
+        <Card className="glass-panel">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Monitored Devices</CardTitle>
             <Server className="h-4 w-4 text-muted-foreground" />
@@ -292,7 +319,7 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="glass-panel">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Active Interfaces</CardTitle>
             <Activity className="h-4 w-4 text-muted-foreground" />
@@ -303,7 +330,7 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="glass-panel">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Network Traffic</CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
@@ -316,7 +343,7 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="glass-panel">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Global Critical Alerts</CardTitle>
             <AlertTriangle className="h-4 w-4 text-red-600" />
@@ -331,8 +358,8 @@ export default async function DashboardPage() {
       </section>
 
       {/* Global Office Network Map */}
-      <section className="mb-6">
-        <Card>
+      <section className="mb-8">
+        <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
           <CardHeader>
             <div className="flex items-center justify-between">
                 <div>
@@ -369,7 +396,7 @@ export default async function DashboardPage() {
 
               {/* Office Statistics */}
               <div className="space-y-4">
-                <Card>
+                <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-medium">Office Statistics</CardTitle>
                   </CardHeader>
@@ -386,7 +413,7 @@ export default async function DashboardPage() {
                         <Users className="h-4 w-4 text-muted-foreground" />
                         <span className="text-sm">Total Devices</span>
                       </div>
-                      <span className="font-semibold">{offices.reduce((sum, office) => sum + (office.device_count || 0), 0)}</span>
+                      <span className="font-semibold">{totalDevicesAcrossOffices}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -406,20 +433,20 @@ export default async function DashboardPage() {
                 </Card>
 
                 {/* Top Offices by Device Count */}
-                <Card>
+                <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-medium">Top Offices by Device Count</CardTitle>
                   </CardHeader>
                   <CardContent>
           <div className="space-y-2">
                       {offices
-                        .sort((a, b) => (b.device_count || 0) - (a.device_count || 0))
+                        .sort((a, b) => (officeDeviceCounts[b._id] || 0) - (officeDeviceCounts[a._id] || 0))
                         .slice(0, 5)
                         .map((office, index) => (
                           <Link key={office._id} href={`/location/cities/offices/${office._id}`}>
-                            <div className="flex items-center justify-between p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors cursor-pointer">
+                            <div className="flex items-center justify-between p-2 rounded glass-hover transition-colors cursor-pointer bg-white/5 border border-white/10">
                               <div className="flex items-center gap-2">
-                                <div className="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center text-xs font-semibold">
+                                <div className="w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center text-xs font-semibold text-slate-100">
                                   {index + 1}
                                 </div>
                 <div>
@@ -428,7 +455,7 @@ export default async function DashboardPage() {
                                 </div>
                 </div>
                 <div className="text-right">
-                                <div className="text-sm font-semibold">{office.device_count || 0}</div>
+                                <div className="text-sm font-semibold">{officeDeviceCounts[office._id] || 0}</div>
                                 <div className="text-xs text-muted-foreground">devices</div>
                 </div>
               </div>
@@ -439,25 +466,25 @@ export default async function DashboardPage() {
                 </Card>
 
                 {/* Quick Actions */}
-                <Card>
+                <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-medium">Quick Actions</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2">
                     <Link href="/location">
-                      <Button variant="outline" className="w-full justify-start">
+                      <Button variant="outline" className="w-full justify-start btn-glass">
                         <MapPin className="h-4 w-4 mr-2" />
                         View All Locations
                       </Button>
                     </Link>
                     <Link href="/location?view=map">
-                      <Button variant="outline" className="w-full justify-start">
+                      <Button variant="outline" className="w-full justify-start btn-glass">
                         <Map className="h-4 w-4 mr-2" />
                         Switch to Map View
                       </Button>
                     </Link>
                     <Link href="/devices">
-                      <Button variant="outline" className="w-full justify-start">
+                      <Button variant="outline" className="w-full justify-start btn-glass">
                         <Server className="h-4 w-4 mr-2" />
                         View All Devices
                       </Button>
@@ -473,10 +500,10 @@ export default async function DashboardPage() {
       {/* Recent Alerts and Activity */}
       <section className="grid gap-6 lg:grid-cols-2">
         {/* Recent Alerts */}
-        <Card>
+        <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-red-600" />
+              <AlertTriangle className="h-5 w-5 text-red-400" />
               Recent Critical Alerts
             </CardTitle>
             <CardDescription>
@@ -487,9 +514,9 @@ export default async function DashboardPage() {
             {logs.filter(log => log.level === 'error' || log.level === 'critical').slice(0, 5).length > 0 ? (
               <div className="space-y-3">
                 {logs.filter(log => log.level === 'error' || log.level === 'critical').slice(0, 5).map((log, index) => (
-                  <div key={log._id || index} className="flex items-center justify-between p-3 border border-red-200 dark:border-red-800 rounded-lg bg-red-50 dark:bg-red-900/20">
+                  <div key={log._id || index} className="flex items-center justify-between p-3 rounded-lg bg-red-900/20 border border-red-400/30">
                     <div className="flex items-center gap-3">
-                      <AlertTriangle className="h-4 w-4 text-red-600" />
+                      <AlertTriangle className="h-4 w-4 text-red-400" />
                       <div>
                         <div className="text-sm font-medium">{log.deviceName || 'Unknown Device'}</div>
                         <div className="text-xs text-muted-foreground">{log.message || 'Critical Alert'}</div>
@@ -501,7 +528,7 @@ export default async function DashboardPage() {
               </div>
             ) : (
               <div className="text-center py-8">
-                <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-2" />
+                <CheckCircle className="h-12 w-12 text-green-400 mx-auto mb-2" />
                 <p className="text-sm text-muted-foreground">No critical alerts</p>
               </div>
             )}
@@ -509,10 +536,10 @@ export default async function DashboardPage() {
         </Card>
 
         {/* Device Health Overview */}
-        <Card>
+        <Card className="glass-panel" style={{ ['--glass-radius' as any]: '8px' }}  >
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Activity className="h-5 w-5 text-blue-600" />
+              <Activity className="h-5 w-5 text-blue-400" />
               Device Health Overview
             </CardTitle>
             <CardDescription>
@@ -523,21 +550,21 @@ export default async function DashboardPage() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <CheckCircle className="h-4 w-4 text-green-500" />
+                  <CheckCircle className="h-4 w-4 text-green-400" />
                   <span className="text-sm">Operational</span>
                 </div>
                 <span className="font-semibold">{operationalHosts}</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Clock className="h-4 w-4 text-yellow-500" />
+                  <Clock className="h-4 w-4 text-yellow-400" />
                   <span className="text-sm">Warning</span>
                 </div>
                 <span className="font-semibold">{warningAlerts}</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 text-red-500" />
+                  <AlertTriangle className="h-4 w-4 text-red-400" />
                   <span className="text-sm">Critical</span>
                 </div>
                 <span className="font-semibold">{criticalAlerts}</span>
